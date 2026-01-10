@@ -1,0 +1,99 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Provider {
+  openai
+  gemini
+  anthropic
+}
+
+model User {
+  id            String        @id @default(cuid())
+  email         String        @unique
+  passwordHash  String
+  createdAt     DateTime      @default(now())
+  providerKeys  ProviderKey[]
+  modelCaches   ProviderModelCache[]
+  threads       Thread[]
+  auditLogs     AuditLog[]
+}
+
+model ProviderKey {
+  id              String               @id @default(cuid())
+  userId          String
+  provider        Provider
+  keyCiphertext   String
+  keyMask         String
+  status          String
+  createdAt       DateTime             @default(now())
+  lastValidatedAt DateTime?
+  lastUsedAt      DateTime?
+  user            User                 @relation(fields: [userId], references: [id])
+  modelCaches     ProviderModelCache[]
+  auditLogs       AuditLog[]
+
+  @@index([userId, provider, status])
+}
+
+model ProviderModelCache {
+  id        String    @id @default(cuid())
+  userId    String
+  provider  Provider
+  keyId     String
+  models    Json
+  fetchedAt DateTime
+  expiresAt DateTime
+  user      User      @relation(fields: [userId], references: [id])
+  key       ProviderKey @relation(fields: [keyId], references: [id])
+
+  @@index([userId, provider, keyId])
+}
+
+model Thread {
+  id           String    @id @default(cuid())
+  userId       String
+  provider     Provider
+  model        String
+  title        String?
+  systemPrompt String?
+  settings     Json?
+  status       String    @default("active")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  messages     Message[]
+  user         User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id              String   @id @default(cuid())
+  threadId        String
+  role            String
+  content         String
+  createdAt       DateTime @default(now())
+  providerMessageId String?
+  clientRequestId String?
+  metadata        Json?
+  thread          Thread   @relation(fields: [threadId], references: [id])
+
+  @@index([threadId, createdAt])
+  @@index([threadId, clientRequestId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  provider  Provider?
+  keyId     String?
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}

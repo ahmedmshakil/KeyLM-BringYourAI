@@ -1,0 +1,81 @@
+import { Provider } from '@prisma/client';
+import { requireUser } from '@/lib/auth';
+import { errorResponse, jsonResponse } from '@/lib/http';
+import { messageCreateSchema } from '@/lib/validators';
+import { getThread, appendMessage, findMessageByRequestId } from '@/lib/services/threadService';
+import { getActiveKey } from '@/lib/services/keyService';
+import { decryptSecret } from '@/lib/crypto';
+import { getProviderAdapter } from '@/lib/providers';
+import { buildChatMessages } from '@/lib/services/chatService';
+import { sseResponse } from '@/lib/streaming';
+import { takeToken } from '@/lib/rateLimit';
+import { prisma } from '@/lib/db';
+
+export async function POST(request: Request, { params }: { params: { threadId: string } }) {
+  const user = await requireUser();
+  if (!user) {
+    return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
+  }
+  const thread = await getThread(user.id, params.threadId);
+  if (!thread) {
+    return errorResponse({ code: 'not_found', message: 'Thread not found' }, 404);
+  }
+
+  let body: { content: string; requestId?: string; stream?: boolean };
+  try {
+    body = messageCreateSchema.parse(await request.json());
+  } catch (error) {
+    return errorResponse({ code: 'invalid_request', message: 'Invalid request' }, 400);
+  }
+
+  if (!takeToken(`user:${user.id}`)) {
+    return errorResponse({ code: 'rate_limited', message: 'Too many requests', retryable: true }, 429);
+  }
+
+  if (body.requestId) {
+    const existing = await findMessageByRequestId(thread.id, body.requestId);
+    if (existing) {
+      return jsonResponse({ message: existing });
+    }
+  }
+
+  const userMessage = await appendMessage(thread.id, 'user', body.content, body.requestId);
+
+  const key = await getActiveKey(user.id, thread.provider as Provider);
+  if (!key) {
+    return errorResponse({ code: 'key_missing', message: 'Connect a key first' }, 400);
+  }
+  await prisma.providerKey.update({
+    where: { id: key.id },
+    data: { lastUsedAt: new Date() }
+  });
+
+  const rawKey = decryptSecret(key.keyCiphertext);
+  const adapter = getProviderAdapter(thread.provider as Provider);
+  const messages = buildChatMessages(thread, thread.messages.concat(userMessage));
+
+  const settings = (thread.settings as { temperature?: number; maxTokens?: number }) ?? {};
+
+  if (body.stream === false) {
+    const stream = adapter.streamChat(rawKey, thread.model, messages, settings, request.signal);
+    let fullText = '';
+    for await (const chunk of stream) {
+      fullText += chunk.delta;
+    }
+    const assistant = await appendMessage(thread.id, 'assistant', fullText, body.requestId);
+    return jsonResponse({ message: assistant });
+  }
+
+  return sseResponse(async (send, signal) => {
+    const abort = new AbortController();
+    signal.addEventListener('abort', () => abort.abort());
+    const stream = adapter.streamChat(rawKey, thread.model, messages, settings, abort.signal);
+    let fullText = '';
+    for await (const chunk of stream) {
+      fullText += chunk.delta;
+      send('delta', { delta: chunk.delta });
+    }
+    const assistant = await appendMessage(thread.id, 'assistant', fullText, body.requestId);
+    send('done', { message: assistant });
+  }, request.signal);
+}
