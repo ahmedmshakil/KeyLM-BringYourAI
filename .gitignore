@@ -45,7 +45,7 @@ lerna-debug.log*
 
 # vercel
 .vercel
-
+Agent.md
 # typescript
 *.tsbuildinfo
 next-env.d.ts
