@@ -1,5 +1,4 @@
 import { ChatMessage, ChatSettings, NormalizedModel, StreamChunk, StreamResult } from '@/lib/providers/types';
-import { parseSseStream } from '@/lib/providers/sse';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1';
 
@@ -56,7 +55,7 @@ export async function* streamChat(
 ): AsyncGenerator<StreamChunk, StreamResult, void> {
   const { system, contents } = splitSystem(messages);
   const res = await fetch(
-    `${BASE_URL}/${encodeURIComponent(model)}:streamGenerateContent?key=${encodeURIComponent(key)}`,
+    `${BASE_URL}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`,
     {
       method: 'POST',
       headers: {
@@ -80,17 +79,60 @@ export async function* streamChat(
   }
 
   let fullText = '';
-  for await (const event of parseSseStream(res.body)) {
-    if (!event.data) {
-      continue;
+  
+  // Gemini with alt=sse returns proper SSE format
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    
+    buffer += decoder.decode(value, { stream: true });
+    
+    // Process complete SSE events (separated by double newline)
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop() || '';
+    
+    for (const part of parts) {
+      if (!part.trim()) continue;
+      
+      // Extract data from SSE format
+      const dataMatch = part.match(/^data:\s*(.+)$/m);
+      if (!dataMatch) continue;
+      
+      try {
+        const payload = JSON.parse(dataMatch[1]) as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        };
+        const delta = payload.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (delta) {
+          fullText += delta;
+          yield { delta };
+        }
+      } catch {
+        // Skip malformed JSON
+      }
     }
-    const payload = JSON.parse(event.data) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    const delta = payload.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (delta) {
-      fullText += delta;
-      yield { delta };
+  }
+  
+  // Process any remaining buffer
+  if (buffer.trim()) {
+    const dataMatch = buffer.match(/^data:\s*(.+)$/m);
+    if (dataMatch) {
+      try {
+        const payload = JSON.parse(dataMatch[1]) as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        };
+        const delta = payload.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (delta) {
+          fullText += delta;
+          yield { delta };
+        }
+      } catch {
+        // Skip malformed JSON
+      }
     }
   }
 

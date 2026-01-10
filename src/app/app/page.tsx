@@ -62,9 +62,13 @@ type ThreadDetail = {
 export default function AppPage() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authView, setAuthView] = useState<'login' | 'register' | 'reset'>('login');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetLink, setResetLink] = useState('');
+  const [authNotice, setAuthNotice] = useState('');
+  const [authNoticeTone, setAuthNoticeTone] = useState<'error' | 'success'>('error');
   const [providers, setProviders] = useState<Record<ProviderId, KeyInfo[]>>({
     openai: [],
     gemini: [],
@@ -193,17 +197,50 @@ export default function AppPage() {
 
   const handleAuth = async (event: React.FormEvent) => {
     event.preventDefault();
-    setNotice('');
+    if (authView === 'reset') {
+      return;
+    }
+    setAuthNotice('');
+    setAuthNoticeTone('error');
     try {
-      const res = await apiJson<{ user: User }>(`/api/auth/${authMode}`, {
+      const res = await apiJson<{ user: User }>(`/api/auth/${authView}`, {
         method: 'POST',
         body: JSON.stringify({ email: authEmail, password: authPassword })
       });
       setUser(res.user);
       setAuthEmail('');
       setAuthPassword('');
+      setResetEmail('');
+      setResetLink('');
+      setAuthNotice('');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Auth failed');
+      setAuthNotice(error instanceof Error ? error.message : 'Auth failed');
+    }
+  };
+
+  const handleResetRequest = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setAuthNotice('');
+    setAuthNoticeTone('error');
+    setResetLink('');
+    const email = resetEmail.trim();
+    if (!email) {
+      setAuthNotice('Enter your email to receive a reset link.');
+      return;
+    }
+    try {
+      const res = await apiJson<{ ok: boolean; resetUrl?: string }>(
+        '/api/auth/password-reset/request',
+        {
+          method: 'POST',
+          body: JSON.stringify({ email })
+        }
+      );
+      setAuthNoticeTone('success');
+      setAuthNotice('If the email exists, a reset link is on its way.');
+      setResetLink(res.resetUrl ?? '');
+    } catch (error) {
+      setAuthNotice(error instanceof Error ? error.message : 'Reset request failed');
     }
   };
 
@@ -212,6 +249,14 @@ export default function AppPage() {
     setUser(null);
     setActiveThread(null);
     setThreads([]);
+    setNotice('');
+    setAuthView('login');
+    setAuthNotice('');
+    setAuthNoticeTone('error');
+    setResetLink('');
+    setAuthEmail('');
+    setAuthPassword('');
+    setResetEmail('');
   };
 
   const handleConnectKey = async (provider: ProviderId) => {
@@ -361,168 +406,195 @@ export default function AppPage() {
     setStreaming(false);
   };
 
+  const isResetView = authView === 'reset';
+  const isLoginView = authView === 'login';
+
   if (loading) {
     return <main className="container">Loading...</main>;
   }
 
   if (!user) {
     return (
-      <main className="container">
-        <section className="hero">
-          <div>
-            <span className="badge">BYOK Workspace</span>
-            <h1>Sign in to wire your providers.</h1>
-            <p>Own your keys, switch models, and stream replies in one secure workspace.</p>
+      <main className="auth-container">
+        <div className="auth-wrapper">
+          <div className="auth-branding">
+            <span className="badge glow">BYOK Workspace</span>
+            <h1>KeyLM</h1>
+            <p className="auth-tagline">Own your keys, switch models, and stream replies in one secure workspace.</p>
           </div>
-          <form className="card" onSubmit={handleAuth}>
-            <h3>{authMode === 'login' ? 'Welcome back' : 'Create account'}</h3>
-            <p className="tag">{authMode === 'login' ? 'Sign in to continue' : 'Start fresh in minutes'}</p>
-            <label className="tag" htmlFor="email">Email</label>
-            <input
-              className="input"
-              id="email"
-              type="email"
-              value={authEmail}
-              onChange={(event) => setAuthEmail(event.target.value)}
-              required
-            />
-            <label className="tag" htmlFor="password">Password</label>
-            <input
-              className="input"
-              id="password"
-              type="password"
-              value={authPassword}
-              onChange={(event) => setAuthPassword(event.target.value)}
-              required
-            />
-            <button className="button" type="submit">
-              {authMode === 'login' ? 'Sign in' : 'Create account'}
-            </button>
-            <button
-              className="button secondary"
-              type="button"
-              onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
-            >
-              {authMode === 'login' ? 'Need an account?' : 'Already have an account?'}
-            </button>
-            {notice && <p className="tag">{notice}</p>}
-          </form>
-        </section>
+          {isResetView ? (
+            <form className="auth-card" onSubmit={handleResetRequest}>
+              <div className="auth-card-header">
+                <h2>Reset password</h2>
+                <p>We will send a reset link to your inbox.</p>
+              </div>
+              <div className="auth-form-group">
+                <label htmlFor="reset-email">Email address</label>
+                <input
+                  className="auth-input"
+                  id="reset-email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={resetEmail}
+                  onChange={(event) => setResetEmail(event.target.value)}
+                  required
+                />
+              </div>
+              <button className="auth-button primary" type="submit">
+                Send reset link
+              </button>
+              <button
+                className="auth-button secondary"
+                type="button"
+                onClick={() => {
+                  setAuthView('login');
+                  setAuthNotice('');
+                  setAuthNoticeTone('error');
+                  setResetLink('');
+                }}
+              >
+                Back to sign in
+              </button>
+              {authNotice && (
+                <p className={`auth-notice ${authNoticeTone === 'success' ? 'success' : ''}`}>{authNotice}</p>
+              )}
+              {resetLink && (
+                <p className="auth-reset-link">
+                  Dev reset link: <a href={resetLink}>{resetLink}</a>
+                </p>
+              )}
+            </form>
+          ) : (
+            <form className="auth-card" onSubmit={handleAuth}>
+              <div className="auth-card-header">
+                <h2>{isLoginView ? 'Welcome back' : 'Create account'}</h2>
+                <p>{isLoginView ? 'Sign in to continue to your workspace' : 'Get started in just a few seconds'}</p>
+              </div>
+              <div className="auth-form-group">
+                <label htmlFor="email">Email address</label>
+                <input
+                  className="auth-input"
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={authEmail}
+                  onChange={(event) => setAuthEmail(event.target.value)}
+                  required
+                />
+              </div>
+              <div className="auth-form-group">
+                <label htmlFor="password">Password</label>
+                <input
+                  className="auth-input"
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={authPassword}
+                  onChange={(event) => setAuthPassword(event.target.value)}
+                  required
+                />
+              </div>
+              {isLoginView && (
+                <div className="auth-links">
+                  <button
+                    className="auth-link"
+                    type="button"
+                    onClick={() => {
+                      setAuthView('reset');
+                      setResetEmail(authEmail);
+                      setAuthNotice('');
+                      setAuthNoticeTone('error');
+                      setResetLink('');
+                    }}
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+              )}
+              <button className="auth-button primary" type="submit">
+                {isLoginView ? 'Sign in' : 'Create account'}
+              </button>
+              <div className="auth-divider">
+                <span>or</span>
+              </div>
+              <button
+                className="auth-button secondary"
+                type="button"
+                onClick={() => {
+                  setAuthView(isLoginView ? 'register' : 'login');
+                  setAuthNotice('');
+                  setAuthNoticeTone('error');
+                  setResetLink('');
+                }}
+              >
+                {isLoginView ? 'Create a new account' : 'Sign in to existing account'}
+              </button>
+              {authNotice && (
+                <p className={`auth-notice ${authNoticeTone === 'success' ? 'success' : ''}`}>{authNotice}</p>
+              )}
+            </form>
+          )}
+        </div>
       </main>
     );
   }
 
   return (
     <main className="container">
-      <div className="chat-header">
-        <div>
+      {/* Header: Email left, Workspace center, Sign out right */}
+      <header className="main-header">
+        <div className="header-left">
           <span className="badge">Signed in</span>
           <h2>{user.email}</h2>
         </div>
-        <div className="topbar">
+        <div className="header-center">
+          <div className="workspace-controls">
+            <select
+              className="select"
+              value={currentProvider}
+              onChange={(event) => setCurrentProvider(event.target.value as ProviderId)}
+            >
+              {PROVIDERS.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name}
+                </option>
+              ))}
+            </select>
+            <select
+              className="select"
+              value={selectedModel}
+              onChange={(event) => setSelectedModel(event.target.value)}
+              disabled={!connectedProviders.includes(currentProvider)}
+            >
+              {models[currentProvider]?.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.displayName}
+                </option>
+              ))}
+            </select>
+            <button className="button secondary" onClick={() => loadModels(currentProvider, true)}>
+              Refresh models
+            </button>
+          </div>
+          {modelsMeta[currentProvider]?.stale && (
+            <p className="tag">Showing cached models. Refresh to retry.</p>
+          )}
+        </div>
+        <div className="header-right">
           <button className="button secondary" onClick={handleLogout}>
             Sign out
           </button>
         </div>
-      </div>
+      </header>
 
-      {notice && <p className="tag">{notice}</p>}
+      {notice && <p className="tag notice-bar">{notice}</p>}
 
-      <div className="app-shell">
-        <aside className="sidebar">
-          <div className="card">
-            <h3>Providers</h3>
-            <p>Connect keys and keep models fresh.</p>
-          </div>
-          {PROVIDERS.map((provider) => {
-            const keys = providers[provider.id];
-            const connected = keys.some((key) => key.status === 'active');
-            return (
-              <div key={provider.id} className="card">
-                <div className="chat-header">
-                  <div>
-                    <h3>{provider.name}</h3>
-                    <p>{provider.detail}</p>
-                  </div>
-                  <span className={`status ${connected ? 'connected' : ''}`}>{connected ? 'Connected' : 'Idle'}</span>
-                </div>
-                <div className="grid" style={{ marginTop: 12 }}>
-                  <input
-                    className="input"
-                    type="password"
-                    placeholder="Paste API key"
-                    value={keyInputs[provider.id]}
-                    onChange={(event) =>
-                      setKeyInputs((prev) => ({ ...prev, [provider.id]: event.target.value }))
-                    }
-                  />
-                  <button className="button" onClick={() => handleConnectKey(provider.id)}>
-                    Connect
-                  </button>
-                </div>
-                <div className="grid" style={{ marginTop: 12 }}>
-                  {keys.map((key) => (
-                    <div key={key.id} className="thread-item">
-                      <div className="tag">{key.keyMask}</div>
-                      <small>{key.status}</small>
-                      <button
-                        className="button secondary"
-                        style={{ marginTop: 8 }}
-                        onClick={() => handleDeleteKey(provider.id, key.id)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </aside>
-
-        <section className="chat-panel">
-          <div className="card">
-            <div className="chat-header">
-              <div>
-                <h3>Chat workspace</h3>
-                <p>Pick a provider, choose a model, and start a thread.</p>
-              </div>
-              <div className="topbar">
-                <select
-                  className="select"
-                  value={currentProvider}
-                  onChange={(event) => setCurrentProvider(event.target.value as ProviderId)}
-                >
-                  {PROVIDERS.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="select"
-                  value={selectedModel}
-                  onChange={(event) => setSelectedModel(event.target.value)}
-                  disabled={!connectedProviders.includes(currentProvider)}
-                >
-                  {models[currentProvider]?.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.displayName}
-                    </option>
-                  ))}
-                </select>
-                <button className="button secondary" onClick={() => loadModels(currentProvider, true)}>
-                  Refresh models
-                </button>
-              </div>
-            </div>
-            {modelsMeta[currentProvider]?.stale && (
-              <p className="tag">Showing cached models. Refresh to retry.</p>
-            )}
-          </div>
-
-          <div className="grid" style={{ gridTemplateColumns: '280px 1fr', gap: 20 }}>
-            <div className="card">
+      {/* Main content: Chat left (wider), Providers right */}
+      <div className="app-shell-new">
+        <section className="chat-section">
+          {/* Threads and Chat side by side */}
+          <div className="threads-chat-grid">
+            <div className="card threads-panel">
               <div className="chat-header">
                 <h3>Threads</h3>
                 <button className="button secondary" onClick={handleNewThread}>
@@ -544,7 +616,7 @@ export default function AppPage() {
               </div>
             </div>
 
-            <div className="card">
+            <div className="card chat-box">
               <div className="chat-messages">
                 {activeThread?.messages?.map((msg) => (
                   <div key={msg.id} className={`chat-bubble ${msg.role}`}>
@@ -552,19 +624,26 @@ export default function AppPage() {
                   </div>
                 ))}
               </div>
-              <div className="chat-input" style={{ marginTop: 12 }}>
+              <div className="chat-input">
                 <textarea
                   placeholder="Send a message..."
                   value={messageInput}
                   onChange={(event) => setMessageInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
                 />
-                <div className="grid" style={{ minWidth: 140 }}>
-                  <button className="button" onClick={handleSendMessage}>
-                    Send
-                  </button>
-                  {streaming && (
+                <div className="send-actions">
+                  {streaming ? (
                     <button className="button secondary" onClick={handleStop}>
                       Stop
+                    </button>
+                  ) : (
+                    <button className="button" onClick={handleSendMessage}>
+                      Send
                     </button>
                   )}
                 </div>
@@ -572,12 +651,13 @@ export default function AppPage() {
             </div>
           </div>
 
-          <div className="card">
+          {/* Settings below chat */}
+          <div className="card settings-panel">
             <div className="chat-header">
               <h3>Settings</h3>
               <span className="tag">Applied when creating a thread</span>
             </div>
-            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+            <div className="settings-grid">
               <label className="tag">
                 Temperature
                 <input
@@ -605,6 +685,61 @@ export default function AppPage() {
             </div>
           </div>
         </section>
+
+        {/* Providers sidebar on the right */}
+        <aside className="providers-sidebar">
+          <div className="card">
+            <h3>Providers</h3>
+            <p>Connect your API keys</p>
+          </div>
+          {PROVIDERS.map((provider) => {
+            const keys = providers[provider.id];
+            const connected = keys.some((key) => key.status === 'active');
+            return (
+              <div key={provider.id} className="card provider-card">
+                <div className="provider-header">
+                  <div>
+                    <h4>{provider.name}</h4>
+                    <p>{provider.detail}</p>
+                  </div>
+                  <span className={`status ${connected ? 'connected' : ''}`}>
+                    {connected ? 'Connected' : 'Idle'}
+                  </span>
+                </div>
+                <div className="provider-input">
+                  <input
+                    className="input"
+                    type="password"
+                    placeholder="Paste API key"
+                    value={keyInputs[provider.id]}
+                    onChange={(event) =>
+                      setKeyInputs((prev) => ({ ...prev, [provider.id]: event.target.value }))
+                    }
+                  />
+                  <button className="button" onClick={() => handleConnectKey(provider.id)}>
+                    Connect
+                  </button>
+                </div>
+                {keys.length > 0 && (
+                  <div className="connected-keys">
+                    {keys.map((key) => (
+                      <div key={key.id} className="key-item">
+                        <span className="tag">{key.keyMask}</span>
+                        <small>{key.status}</small>
+                        <button
+                          className="button secondary small"
+                          onClick={() => handleDeleteKey(provider.id, key.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </aside>
       </div>
     </main>
   );

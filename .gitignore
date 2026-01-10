@@ -53,7 +53,6 @@ next-env.d.ts
 # Prisma
 prisma/*.db
 prisma/*.db-journal
-prisma/migrations/**/migration.sql
 node_modules/.prisma/
 
 # OS

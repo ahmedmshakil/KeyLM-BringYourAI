@@ -18,6 +18,7 @@ model User {
   email         String        @unique
   passwordHash  String
   createdAt     DateTime      @default(now())
+  passwordResetTokens PasswordResetToken[]
   providerKeys  ProviderKey[]
   modelCaches   ProviderModelCache[]
   threads       Thread[]
@@ -97,4 +98,16 @@ model AuditLog {
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id])
   key       ProviderKey? @relation(fields: [keyId], references: [id])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  usedAt    DateTime?
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, expiresAt])
 }
