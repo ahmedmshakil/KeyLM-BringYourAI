@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { apiJson } from '@/lib/client/api';
 import { readSseStream } from '@/lib/client/sse';
 
@@ -94,8 +96,6 @@ export default function AppPage() {
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [activeThread, setActiveThread] = useState<ThreadDetail | null>(null);
   const [messageInput, setMessageInput] = useState('');
-  const [temperature, setTemperature] = useState(0.7);
-  const [maxTokens, setMaxTokens] = useState(1024);
   const [notice, setNotice] = useState('');
   const [streaming, setStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -296,8 +296,7 @@ export default function AppPage() {
         method: 'POST',
         body: JSON.stringify({
           provider: currentProvider,
-          model: selectedModel,
-          settings: { temperature, maxTokens }
+          model: selectedModel
         })
       });
       const created = { ...res.thread, messages: [] };
@@ -356,43 +355,92 @@ export default function AppPage() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    const shouldStream = currentProvider !== 'gemini';
 
     try {
       const res = await fetch(`/api/threads/${thread.id}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, requestId, stream: true }),
+        body: JSON.stringify({ content, requestId, stream: shouldStream }),
         signal: controller.signal
       });
       if (!res.ok) {
-        throw new Error('Streaming failed');
+        let message = 'Failed to send message';
+        try {
+          const text = await res.text();
+          if (text) {
+            try {
+              const payload = JSON.parse(text) as { error?: { message?: string } };
+              message = payload?.error?.message ?? text;
+            } catch {
+              message = text;
+            }
+          }
+        } catch {
+          // Body already consumed or empty
+        }
+        throw new Error(message);
       }
-      await readSseStream(res, (event) => {
-        if (event.event === 'delta') {
-          const payload = JSON.parse(event.data) as { delta: string };
-          setActiveThread((prev) => {
-            if (!prev) {
-              return prev;
+      if (shouldStream) {
+        await readSseStream(res, (event) => {
+          if (event.event === 'delta') {
+            const payload = JSON.parse(event.data) as { delta: string };
+            setActiveThread((prev) => {
+              if (!prev) {
+                return prev;
+              }
+              const updated = [...prev.messages];
+              const idx = updated.findIndex((msg) => msg.id === optimisticAssistant.id);
+              if (idx >= 0) {
+                updated[idx] = {
+                  ...updated[idx],
+                  content: updated[idx].content + payload.delta
+                };
+              }
+              return { ...prev, messages: updated };
+            });
+          }
+          if (event.event === 'done') {
+            setStreaming(false);
+          }
+          if (event.event === 'error') {
+            let message = 'Streaming error.';
+            if (event.data) {
+              try {
+                const payload = JSON.parse(event.data) as { message?: string };
+                if (payload?.message) {
+                  message = payload.message;
+                } else {
+                  message = event.data;
+                }
+              } catch {
+                message = event.data;
+              }
             }
-            const updated = [...prev.messages];
-            const idx = updated.findIndex((msg) => msg.id === optimisticAssistant.id);
-            if (idx >= 0) {
-              updated[idx] = {
-                ...updated[idx],
-                content: updated[idx].content + payload.delta
-              };
-            }
-            return { ...prev, messages: updated };
-          });
-        }
-        if (event.event === 'done') {
-          setStreaming(false);
-        }
-        if (event.event === 'error') {
-          setNotice('Streaming error.');
-          setStreaming(false);
-        }
-      });
+            setNotice(message);
+            setStreaming(false);
+          }
+        });
+      } else {
+        const payload = (await res.json()) as { message: MessageInfo };
+        setActiveThread((prev) => {
+          if (!prev) {
+            return prev;
+          }
+          const updated = [...prev.messages];
+          const idx = updated.findIndex((msg) => msg.id === optimisticAssistant.id);
+          if (idx >= 0) {
+            updated[idx] = {
+              ...updated[idx],
+              id: payload.message.id,
+              content: payload.message.content,
+              createdAt: payload.message.createdAt
+            };
+          }
+          return { ...prev, messages: updated };
+        });
+        setStreaming(false);
+      }
       const list = await apiJson<{ threads: ThreadInfo[] }>('/api/threads');
       setThreads(list.threads);
     } catch (error) {
@@ -589,104 +637,76 @@ export default function AppPage() {
 
       {notice && <p className="tag notice-bar">{notice}</p>}
 
-      {/* Main content: Chat left (wider), Providers right */}
+      {/* Main content: Threads left, Chat center, Providers right */}
       <div className="app-shell-new">
-        <section className="chat-section">
-          {/* Threads and Chat side by side */}
-          <div className="threads-chat-grid">
-            <div className="card threads-panel">
-              <div className="chat-header">
-                <h3>Threads</h3>
-                <button className="button secondary" onClick={handleNewThread}>
-                  New thread
-                </button>
-              </div>
-              <div className="thread-list">
-                {threads.map((thread) => (
+        {/* Left sidebar - Threads */}
+        <aside className="threads-sidebar">
+          <div className="card threads-panel">
+            <div className="chat-header">
+              <h3>Threads</h3>
+              <button className="button secondary" onClick={handleNewThread}>
+                New thread
+              </button>
+            </div>
+            <div className="thread-list">
+              {threads.map((thread) => {
+                const messagePreview = thread.lastMessage
+                  ? thread.lastMessage.split(' ').slice(0, 5).join(' ') + (thread.lastMessage.split(' ').length > 5 ? '...' : '')
+                  : 'No messages yet';
+                return (
                   <button
                     key={thread.id}
                     className={`thread-item ${activeThread?.id === thread.id ? 'active' : ''}`}
                     onClick={() => handleSelectThread(thread.id)}
                   >
-                    <div className="tag">{thread.provider}</div>
-                    <div>{thread.model}</div>
-                    <small>{thread.lastMessage ?? 'No messages yet'}</small>
+                    <div className="thread-preview">{messagePreview}</div>
                   </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="card chat-box">
-              <div className="chat-messages">
-                {activeThread?.messages?.map((msg) => (
-                  <div key={msg.id} className={`chat-bubble ${msg.role}`}>
-                    {msg.content}
-                  </div>
-                ))}
-              </div>
-              <div className="chat-input">
-                <textarea
-                  placeholder="Send a message..."
-                  value={messageInput}
-                  onChange={(event) => setMessageInput(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault();
-                      handleSendMessage();
-                    }
-                  }}
-                />
-                <div className="send-actions">
-                  {streaming ? (
-                    <button className="button secondary" onClick={handleStop}>
-                      Stop
-                    </button>
-                  ) : (
-                    <button className="button" onClick={handleSendMessage}>
-                      Send
-                    </button>
-                  )}
-                </div>
-              </div>
+                );
+              })}
             </div>
           </div>
+        </aside>
 
-          {/* Settings below chat */}
-          <div className="card settings-panel">
-            <div className="chat-header">
-              <h3>Settings</h3>
-              <span className="tag">Applied when creating a thread</span>
+        {/* Center - Chat area */}
+        <section className="chat-section">
+          <div className="card chat-box">
+            <div className="chat-messages">
+              {activeThread?.messages?.map((msg) => (
+                <div key={msg.id} className={`chat-bubble ${msg.role}`}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {msg.content}
+                  </ReactMarkdown>
+                </div>
+              ))}
             </div>
-            <div className="settings-grid">
-              <label className="tag">
-                Temperature
-                <input
-                  className="input"
-                  type="number"
-                  min={0}
-                  max={2}
-                  step={0.1}
-                  value={temperature}
-                  onChange={(event) => setTemperature(Number(event.target.value))}
-                />
-              </label>
-              <label className="tag">
-                Max tokens
-                <input
-                  className="input"
-                  type="number"
-                  min={128}
-                  max={4096}
-                  step={128}
-                  value={maxTokens}
-                  onChange={(event) => setMaxTokens(Number(event.target.value))}
-                />
-              </label>
+            <div className="chat-input">
+              <textarea
+                placeholder="Send a message..."
+                value={messageInput}
+                onChange={(event) => setMessageInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
+              />
+              <div className="send-actions">
+                {streaming ? (
+                  <button className="button secondary" onClick={handleStop}>
+                    Stop
+                  </button>
+                ) : (
+                  <button className="button" onClick={handleSendMessage}>
+                    Send
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </section>
 
-        {/* Providers sidebar on the right */}
+        {/* Right sidebar - Providers */}
         <aside className="providers-sidebar">
           <div className="card">
             <h3>Providers</h3>

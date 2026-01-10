@@ -55,6 +55,45 @@ export async function listModels(key: string): Promise<NormalizedModel[]> {
   }));
 }
 
+export async function chat(
+  key: string,
+  model: string,
+  messages: ChatMessage[],
+  settings: ChatSettings,
+  signal?: AbortSignal
+): Promise<StreamResult> {
+  const { system, chat } = splitSystem(messages);
+  const res = await fetch(`${BASE_URL}/messages`, {
+    method: 'POST',
+    headers: {
+      'x-api-key': key,
+      'anthropic-version': VERSION,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model,
+      system: system || undefined,
+      messages: chat,
+      max_tokens: settings.maxTokens ?? 1024,
+      temperature: settings.temperature ?? 0.7,
+      stream: false
+    }),
+    signal
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || 'Anthropic chat failed');
+  }
+
+  const payload = (await res.json()) as {
+    content?: Array<{ type?: string; text?: string }>;
+    usage?: Record<string, number>;
+  };
+  const fullText = payload.content?.map((block) => block.text ?? '').join('') ?? '';
+  return { fullText, usage: payload.usage };
+}
+
 export async function* streamChat(
   key: string,
   model: string,

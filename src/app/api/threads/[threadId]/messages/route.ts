@@ -56,26 +56,29 @@ export async function POST(request: Request, { params }: { params: { threadId: s
 
   const settings = (thread.settings as { temperature?: number; maxTokens?: number }) ?? {};
 
-  if (body.stream === false) {
-    const stream = adapter.streamChat(rawKey, thread.model, messages, settings, request.signal);
-    let fullText = '';
-    for await (const chunk of stream) {
-      fullText += chunk.delta;
-    }
-    const assistant = await appendMessage(thread.id, 'assistant', fullText, body.requestId);
+  // Enable streaming for all providers including Gemini
+  const shouldStream = body.stream !== false;
+  if (!shouldStream) {
+    const result = await adapter.chat(rawKey, thread.model, messages, settings, request.signal);
+    const assistant = await appendMessage(thread.id, 'assistant', result.fullText, body.requestId);
     return jsonResponse({ message: assistant });
   }
 
   return sseResponse(async (send, signal) => {
-    const abort = new AbortController();
-    signal.addEventListener('abort', () => abort.abort());
-    const stream = adapter.streamChat(rawKey, thread.model, messages, settings, abort.signal);
-    let fullText = '';
-    for await (const chunk of stream) {
-      fullText += chunk.delta;
-      send('delta', { delta: chunk.delta });
+    try {
+      const abort = new AbortController();
+      signal.addEventListener('abort', () => abort.abort());
+      const stream = adapter.streamChat(rawKey, thread.model, messages, settings, abort.signal);
+      let fullText = '';
+      for await (const chunk of stream) {
+        fullText += chunk.delta;
+        send('delta', { delta: chunk.delta });
+      }
+      const assistant = await appendMessage(thread.id, 'assistant', fullText, body.requestId);
+      send('done', { message: assistant });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'An error occurred';
+      send('error', { message: errorMessage });
     }
-    const assistant = await appendMessage(thread.id, 'assistant', fullText, body.requestId);
-    send('done', { message: assistant });
   }, request.signal);
 }

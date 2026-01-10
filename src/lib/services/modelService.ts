@@ -2,8 +2,23 @@ import { Provider } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { getProviderAdapter } from '@/lib/providers';
 import { decryptSecret } from '@/lib/crypto';
+import { NormalizedModel } from '@/lib/providers/types';
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function filterModels(provider: Provider, models: NormalizedModel[]) {
+  if (provider === 'openai') {
+    const filtered = models.filter(
+      (model) => model.id.startsWith('gpt-') && !model.id.includes('instruct') && !model.id.includes('realtime')
+    );
+    return filtered.length > 0 ? filtered : models;
+  }
+  if (provider === 'gemini') {
+    const filtered = models.filter((model) => model.capabilities.streaming);
+    return filtered.length > 0 ? filtered : models;
+  }
+  return models;
+}
 
 export async function getModels(userId: string, provider: Provider, refresh = false) {
   const key = await prisma.providerKey.findFirst({
@@ -21,14 +36,18 @@ export async function getModels(userId: string, provider: Provider, refresh = fa
 
   const isExpired = cache ? cache.expiresAt.getTime() <= now.getTime() : true;
   if (!refresh && cache && !isExpired) {
-    return { models: cache.models, stale: false, fetchedAt: cache.fetchedAt };
+    return {
+      models: filterModels(provider, cache.models as NormalizedModel[]),
+      stale: false,
+      fetchedAt: cache.fetchedAt
+    };
   }
 
   const adapter = getProviderAdapter(provider);
   const rawKey = decryptSecret(key.keyCiphertext);
 
   try {
-    const models = await adapter.listModels(rawKey);
+    const models = filterModels(provider, await adapter.listModels(rawKey));
     const fetchedAt = new Date();
     const expiresAt = new Date(fetchedAt.getTime() + CACHE_TTL_MS);
 
@@ -46,7 +65,11 @@ export async function getModels(userId: string, provider: Provider, refresh = fa
     return { models, stale: false, fetchedAt };
   } catch (error) {
     if (cache) {
-      return { models: cache.models, stale: true, fetchedAt: cache.fetchedAt };
+      return {
+        models: filterModels(provider, cache.models as NormalizedModel[]),
+        stale: true,
+        fetchedAt: cache.fetchedAt
+      };
     }
     throw error;
   }

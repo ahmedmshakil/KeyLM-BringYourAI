@@ -36,6 +36,13 @@ export type StreamResult = {
 export type ProviderAdapter = {
   validateKey: (key: string) => Promise<void>;
   listModels: (key: string) => Promise<NormalizedModel[]>;
+  chat: (
+    key: string,
+    model: string,
+    messages: ChatMessage[],
+    settings: ChatSettings,
+    signal?: AbortSignal
+  ) => Promise<StreamResult>;
   streamChat: (
     key: string,
     model: string,

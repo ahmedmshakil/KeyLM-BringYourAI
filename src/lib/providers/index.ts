@@ -1,9 +1,9 @@
-import { ProviderId } from '@/lib/providers/types';
+import { ProviderAdapter, ProviderId } from '@/lib/providers/types';
 import * as openai from '@/lib/providers/openai';
 import * as gemini from '@/lib/providers/gemini';
 import * as anthropic from '@/lib/providers/anthropic';
 
-export function getProviderAdapter(provider: ProviderId) {
+export function getProviderAdapter(provider: ProviderId): ProviderAdapter {
   switch (provider) {
     case 'openai':
       return openai;

@@ -2,7 +2,7 @@ import Link from 'next/link';
 
 export default function Home() {
   return (
-    <main className="container">
+    <main className="landing-container">
       <section className="hero">
         <div>
           <span className="badge">BYOK Multi-Provider</span>

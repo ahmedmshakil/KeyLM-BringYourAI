@@ -32,8 +32,15 @@ export async function listModels(key: string): Promise<NormalizedModel[]> {
     const text = await res.text();
     throw new Error(text || 'Gemini models fetch failed');
   }
-  const payload = (await res.json()) as { models: Array<{ name: string; displayName?: string; supportedGenerationMethods?: string[] }> };
-  return payload.models.map((model) => ({
+  const payload = (await res.json()) as {
+    models: Array<{ name: string; displayName?: string; supportedGenerationMethods?: string[] }>;
+  };
+  const streamable = payload.models.filter((model) =>
+    model.supportedGenerationMethods?.includes('streamGenerateContent')
+  );
+  const usableModels = streamable.length > 0 ? streamable : payload.models;
+
+  return usableModels.map((model) => ({
     id: model.name,
     displayName: model.displayName ?? model.name,
     provider: 'gemini',
@@ -46,6 +53,56 @@ export async function listModels(key: string): Promise<NormalizedModel[]> {
   }));
 }
 
+export async function chat(
+  key: string,
+  model: string,
+  messages: ChatMessage[],
+  settings: ChatSettings,
+  signal?: AbortSignal
+): Promise<StreamResult> {
+  const { system, contents } = splitSystem(messages);
+  // Ensure model path starts with 'models/' for Gemini API
+  const modelPath = model.startsWith('models/') ? model : `models/${model}`;
+  const res = await fetch(
+    `${BASE_URL}/${modelPath}:generateContent?key=${encodeURIComponent(key)}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        contents,
+        systemInstruction: system ? { parts: [{ text: system }] } : undefined,
+        generationConfig: {
+          temperature: settings.temperature ?? 0.7,
+          maxOutputTokens: settings.maxTokens
+        }
+      }),
+      signal
+    }
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    let errorMessage = 'Gemini chat failed';
+    try {
+      const errorData = JSON.parse(text);
+      errorMessage = errorData?.error?.message || text || errorMessage;
+    } catch {
+      errorMessage = text || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+
+  const payload = (await res.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    usageMetadata?: Record<string, number>;
+  };
+  const parts = payload.candidates?.[0]?.content?.parts ?? [];
+  const fullText = parts.map((part) => part.text ?? '').join('');
+  return { fullText, usage: payload.usageMetadata };
+}
+
 export async function* streamChat(
   key: string,
   model: string,
@@ -54,8 +111,10 @@ export async function* streamChat(
   signal?: AbortSignal
 ): AsyncGenerator<StreamChunk, StreamResult, void> {
   const { system, contents } = splitSystem(messages);
+  // Ensure model path starts with 'models/' for Gemini API
+  const modelPath = model.startsWith('models/') ? model : `models/${model}`;
   const res = await fetch(
-    `${BASE_URL}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`,
+    `${BASE_URL}/${modelPath}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`,
     {
       method: 'POST',
       headers: {
@@ -75,7 +134,14 @@ export async function* streamChat(
 
   if (!res.ok || !res.body) {
     const text = await res.text();
-    throw new Error(text || 'Gemini stream failed');
+    let errorMessage = 'Gemini stream failed';
+    try {
+      const errorData = JSON.parse(text);
+      errorMessage = errorData?.error?.message || text || errorMessage;
+    } catch {
+      errorMessage = text || errorMessage;
+    }
+    throw new Error(errorMessage);
   }
 
   let fullText = '';
