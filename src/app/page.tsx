@@ -15,9 +15,9 @@ export default function Home() {
             <Link className="button" href="/app">
               Open the App
             </Link>
-            <a className="button secondary" href="https://github.com" rel="noreferrer">
+            <Link className="button secondary" href="/docs">
               Read the Docs
-            </a>
+            </Link>
           </div>
         </div>
         <div className="grid">

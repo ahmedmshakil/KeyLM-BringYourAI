@@ -1,37 +1,56 @@
-# KeyLM-BringYourAI
+# KeyLM - Bring Your AI
 
-Multi-provider BYOK chat app (OpenAI, Gemini, Anthropic) built with Next.js App Router and Prisma.
+**Your keys. Your models. Your control.**
 
-## Getting Started
+A unified chat workspace for OpenAI, Gemini, and Anthropic. Store your API keys securely, switch between providers seamlessly, and chat with streaming responses,all in one place.
 
-1) Install dependencies
+![KeyLM Dashboard](readmePics/home.png)
+
+## ✨ Features
+
+- **BYOK (Bring Your Own Key)** - Use your own API keys from OpenAI, Gemini, and Anthropic
+- **Encrypted Storage** - Keys are encrypted at rest and never exposed to the client
+- **Multi-Provider Support** - Switch between AI providers without losing context
+- **Auto Model Discovery** - Automatically fetches and caches available models per provider
+## 🚀 Quick Start
+
+### 1. Install dependencies
 ```bash
 npm install
 ```
 
-2) Create `.env` from `.env.example` and set:
-- `DATABASE_URL`
-- `APP_AUTH_SECRET`
-- `APP_ENCRYPTION_KEY` (32-byte base64)
-
-Generate a key with:
+### 2. Configure environment
 ```bash
-node -e "console.log(Buffer.from(require('crypto').randomBytes(32)).toString('base64'))"
+cp .env.example .env
 ```
 
-3) Migrate the database
+
+### 3. Setup database
 ```bash
 npm run prisma:migrate
 ```
 
-4) Run the app
+### 4. Run the app
 ```bash
 npm run dev
 ```
 
-Open `http://localhost:3000` and sign in to connect provider keys.
+Open [http://localhost:3000](http://localhost:3000) and create an account to get started!
 
-## Notes
-- Provider keys are encrypted at rest; raw keys are never returned to the client.
-- Model lists are cached per user/provider for 24 hours and can be refreshed from the UI.
-- Streaming uses SSE from the `/api/threads/:threadId/messages` endpoint.
+
+
+## 🏗️ Tech Stack
+
+- **Frontend**: Next.js 14 (App Router), React, TypeScript
+- **Backend**: Next.js API Routes
+- **Database**: PostgreSQL with Prisma ORM
+- **Auth**: Custom JWT-based authentication
+- **Encryption**: AES-256-GCM for API key storage
+- **Streaming**: Server-Sent Events (SSE)
+
+## 👨‍💻 Author
+
+** Shakil Ahmed**
+
+- GitHub: [@ahmedmshakil](https://github.com/ahmedmshakil)
+
