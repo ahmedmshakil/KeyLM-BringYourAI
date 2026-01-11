@@ -1,6 +1,6 @@
 # KeyLM - Bring Your AI
 
-**Your keys. Your models. Your control.**
+***Your keys. Your models. Your control.**
 
 A unified chat workspace for OpenAI, Gemini, and Anthropic. Store your API keys securely, switch between providers seamlessly, and chat with streaming responses,all in one place.
 
@@ -12,7 +12,7 @@ A unified chat workspace for OpenAI, Gemini, and Anthropic. Store your API keys 
 - **Encrypted Storage** - Keys are encrypted at rest and never exposed to the client
 - **Multi-Provider Support** - Switch between AI providers without losing context
 - **Auto Model Discovery** - Automatically fetches and caches available models per provider
-## 🚀 Quick Start
+##  Quick Start
 
 ### 1. Install dependencies
 ```bash
