@@ -109,6 +109,7 @@ export default function AppPage() {
   const [messageInput, setMessageInput] = useState('');
   const [notice, setNotice] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [isDark, setIsDark] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const connectedProviders = useMemo(() => {
@@ -129,6 +130,23 @@ export default function AppPage() {
     };
     init();
   }, []);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem('theme');
+    if (stored === 'dark') {
+      setIsDark(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (isDark) {
+      root.classList.add('theme-dark');
+    } else {
+      root.classList.remove('theme-dark');
+    }
+    window.localStorage.setItem('theme', isDark ? 'dark' : 'light');
+  }, [isDark]);
 
   useEffect(() => {
     if (!user) {
@@ -664,6 +682,14 @@ export default function AppPage() {
           )}
         </div>
         <div className="header-right">
+          <button
+            className={`theme-toggle ${isDark ? 'is-dark' : ''}`}
+            onClick={() => setIsDark((prev) => !prev)}
+            type="button"
+            aria-label="Toggle dark theme"
+            aria-pressed={isDark}
+            title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+          />
           <button className="button secondary" onClick={handleLogout}>
             Sign out
           </button>
@@ -771,7 +797,7 @@ export default function AppPage() {
                     <h4>{provider.name}</h4>
                     <p>{provider.detail}</p>
                   </div>
-                  <span className={`status ${connected ? 'connected' : ''}`}>
+                  <span className={`status ${connected ? 'connected' : 'idle'}`}>
                     {connected ? 'Connected' : 'Idle'}
                   </span>
                 </div>
