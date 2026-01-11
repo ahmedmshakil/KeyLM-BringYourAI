@@ -39,7 +39,7 @@ type ThreadInfo = {
   id: string;
   provider: ProviderId;
   model: string;
-  title?: string;
+  title?: string | null;
   status: string;
   updatedAt: string;
   lastMessage?: string | null;
@@ -59,6 +59,16 @@ type ThreadDetail = {
   systemPrompt?: string | null;
   settings?: Record<string, unknown> | null;
   messages: MessageInfo[];
+};
+
+const truncateWords = (value: string, limit: number) => {
+  const cleaned = value.replace(/\s+/g, ' ').trim();
+  if (!cleaned) {
+    return '';
+  }
+  const words = cleaned.split(' ');
+  const snippet = words.slice(0, limit).join(' ');
+  return words.length > limit ? `${snippet}...` : snippet;
 };
 
 export default function AppPage() {
@@ -95,6 +105,7 @@ export default function AppPage() {
   const [selectedModel, setSelectedModel] = useState('');
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [activeThread, setActiveThread] = useState<ThreadDetail | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ThreadInfo | null>(null);
   const [messageInput, setMessageInput] = useState('');
   const [notice, setNotice] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -318,6 +329,30 @@ export default function AppPage() {
       setSelectedModel(res.thread.model);
     } catch (error) {
       setNotice('Failed to load thread.');
+    }
+  };
+
+  const handleDeleteThread = (thread: ThreadInfo) => {
+    setDeleteTarget(thread);
+  };
+
+  const handleConfirmDeleteThread = async () => {
+    if (!deleteTarget) {
+      return;
+    }
+    const threadId = deleteTarget.id;
+    try {
+      await apiJson(`/api/threads/${threadId}`, { method: 'DELETE' });
+      setThreads((prev) => prev.filter((thread) => thread.id !== threadId));
+      if (activeThread?.id === threadId) {
+        abortRef.current?.abort();
+        setStreaming(false);
+        setActiveThread(null);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Failed to delete thread');
+    } finally {
+      setDeleteTarget(null);
     }
   };
 
@@ -650,17 +685,31 @@ export default function AppPage() {
             </div>
             <div className="thread-list">
               {threads.map((thread) => {
+                const fallbackTitle = thread.lastMessage ? truncateWords(thread.lastMessage, 4) || 'New thread' : 'New thread';
+                const threadTitle = thread.title && thread.title.trim() ? thread.title : fallbackTitle;
                 const messagePreview = thread.lastMessage
-                  ? thread.lastMessage.split(' ').slice(0, 5).join(' ') + (thread.lastMessage.split(' ').length > 5 ? '...' : '')
+                  ? truncateWords(thread.lastMessage, 8) || 'No messages yet'
                   : 'No messages yet';
                 return (
-                  <button
-                    key={thread.id}
-                    className={`thread-item ${activeThread?.id === thread.id ? 'active' : ''}`}
-                    onClick={() => handleSelectThread(thread.id)}
-                  >
-                    <div className="thread-preview">{messagePreview}</div>
-                  </button>
+                  <div key={thread.id} className="thread-row">
+                    <button
+                      className={`thread-item ${activeThread?.id === thread.id ? 'active' : ''}`}
+                      onClick={() => handleSelectThread(thread.id)}
+                      type="button"
+                    >
+                      <div className="thread-title">{threadTitle}</div>
+                      <div className="thread-preview">{messagePreview}</div>
+                    </button>
+                    <button
+                      className="thread-menu"
+                      onClick={() => handleDeleteThread(thread)}
+                      type="button"
+                      aria-label="Delete thread"
+                      title="Delete thread"
+                    >
+                      ...
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -761,6 +810,23 @@ export default function AppPage() {
           })}
         </aside>
       </div>
+
+      {deleteTarget && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="card modal">
+            <h3>Delete thread?</h3>
+            <p>This will permanently remove the thread and all of its messages.</p>
+            <div className="modal-actions">
+              <button className="button secondary" type="button" onClick={() => setDeleteTarget(null)}>
+                Cancel
+              </button>
+              <button className="button danger" type="button" onClick={handleConfirmDeleteThread}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

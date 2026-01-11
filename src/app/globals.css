@@ -119,9 +119,18 @@ button {
   border-color: var(--border);
 }
 
+.button.danger {
+  background: var(--danger);
+  color: #fff;
+}
+
 .button:hover {
   transform: translateY(-1px);
   box-shadow: 0 10px 20px rgba(229, 111, 46, 0.25);
+}
+
+.button.danger:hover {
+  box-shadow: 0 10px 20px rgba(185, 58, 45, 0.28);
 }
 
 .badge {
@@ -232,9 +241,33 @@ button {
   border-radius: 12px;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 27, 22, 0.4);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 40;
+}
+
+.modal {
+  width: min(420px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
+}
+
 .app-shell-new {
   display: grid;
-  grid-template-columns: 260px 1fr 300px;
+  grid-template-columns: 300px 1fr 300px;
   gap: 20px;
   flex: 1;
   min-height: 0;
@@ -632,18 +665,23 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 420px;
-  overflow-y: auto;
+  width: 100%;
+}
+
+.thread-row {
+  position: relative;
+  width: 100%;
 }
 
 .thread-item {
-  padding: 12px 14px;
+  padding: 12px 44px 12px 14px;
   border-radius: 14px;
   border: 1px solid var(--border);
   background: #fff;
   transition: all 0.2s ease;
   text-align: left;
   width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -659,6 +697,15 @@ button {
   background: #fef5ed;
 }
 
+.thread-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .thread-model {
   font-weight: 600;
   font-size: 0.9rem;
@@ -671,6 +718,41 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.thread-menu {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.thread-menu:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--ink);
+}
+
+.thread-delete {
+  border-color: #f1c3b9;
+  color: var(--danger);
+}
+
+.thread-delete:hover {
+  box-shadow: 0 10px 20px rgba(185, 58, 45, 0.18);
 }
 
 .chat-panel {
@@ -1120,7 +1202,7 @@ ol.docs-list li {
 
 @media (max-width: 1200px) {
   .app-shell-new {
-    grid-template-columns: 220px 1fr 280px;
+    grid-template-columns: 260px 1fr 280px;
     gap: 16px;
   }
 }
