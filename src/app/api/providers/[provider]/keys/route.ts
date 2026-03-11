@@ -1,17 +1,21 @@
 import { Provider } from '@prisma/client';
 import { requireUser } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { keyCreateSchema, providerSchema } from '@/lib/validators';
+import { keyCreateSchema, keyProviderSchema } from '@/lib/validators';
 import { createKey } from '@/lib/services/keyService';
 import { errorResponse, jsonResponse } from '@/lib/http';
 import { mapProviderError } from '@/lib/services/providerErrors';
 
-export async function POST(request: Request, { params }: { params: { provider: string } }) {
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ provider: string }> }
+) {
   const user = await requireUser();
   if (!user) {
     return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
   }
-  const provider = providerSchema.parse(params.provider) as Provider;
+  const { provider: rawProvider } = await params;
+  const provider = keyProviderSchema.parse(rawProvider) as Provider;
   try {
     const body = keyCreateSchema.parse(await request.json());
     const key = await createKey(user.id, provider, body.key);
@@ -36,12 +40,16 @@ export async function POST(request: Request, { params }: { params: { provider: s
   }
 }
 
-export async function GET(request: Request, { params }: { params: { provider: string } }) {
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ provider: string }> }
+) {
   const user = await requireUser();
   if (!user) {
     return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
   }
-  const provider = providerSchema.parse(params.provider) as Provider;
+  const { provider: rawProvider } = await params;
+  const provider = keyProviderSchema.parse(rawProvider) as Provider;
   const keys = await prisma.providerKey.findMany({
     where: { userId: user.id, provider },
     orderBy: { createdAt: 'desc' }

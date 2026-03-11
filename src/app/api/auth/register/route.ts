@@ -22,7 +22,7 @@ export async function POST(request: Request) {
       data: { email: body.email, passwordHash }
     });
     const token = signSession(user.id);
-    setSessionCookie(token);
+    await setSessionCookie(token);
     return jsonResponse({ user: { id: user.id, email: user.email } }, { status: 201 });
   } catch (error) {
     return errorResponse({ code: 'invalid_request', message: 'Invalid request' }, 400);

@@ -22,7 +22,7 @@ export async function POST(request: Request) {
       return errorResponse({ code: 'invalid_credentials', message: 'Invalid credentials' }, 401);
     }
     const token = signSession(user.id);
-    setSessionCookie(token);
+    await setSessionCookie(token);
     return jsonResponse({ user: { id: user.id, email: user.email } });
   } catch (error) {
     return errorResponse({ code: 'invalid_request', message: 'Invalid request' }, 400);

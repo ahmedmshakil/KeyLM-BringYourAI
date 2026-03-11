@@ -1,8 +1,8 @@
 import { cookies } from 'next/headers';
 import { SESSION_COOKIE, SESSION_MAX_AGE } from '@/lib/session';
 
-export function setSessionCookie(token: string) {
-  const cookieStore = cookies();
+export async function setSessionCookie(token: string) {
+  const cookieStore = await cookies();
   cookieStore.set({
     name: SESSION_COOKIE,
     value: token,
@@ -14,8 +14,8 @@ export function setSessionCookie(token: string) {
   });
 }
 
-export function clearSessionCookie() {
-  const cookieStore = cookies();
+export async function clearSessionCookie() {
+  const cookieStore = await cookies();
   cookieStore.set({
     name: SESSION_COOKIE,
     value: '',

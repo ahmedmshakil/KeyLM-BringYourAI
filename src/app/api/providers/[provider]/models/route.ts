@@ -1,15 +1,19 @@
 import { Provider } from '@prisma/client';
 import { requireUser } from '@/lib/auth';
-import { providerSchema } from '@/lib/validators';
+import { keyProviderSchema } from '@/lib/validators';
 import { getModels } from '@/lib/services/modelService';
 import { errorResponse, jsonResponse } from '@/lib/http';
 
-export async function GET(request: Request, { params }: { params: { provider: string } }) {
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ provider: string }> }
+) {
   const user = await requireUser();
   if (!user) {
     return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
   }
-  const provider = providerSchema.parse(params.provider) as Provider;
+  const { provider: rawProvider } = await params;
+  const provider = keyProviderSchema.parse(rawProvider) as Provider;
   const url = new URL(request.url);
   const refresh = url.searchParams.get('refresh') === 'true';
   try {
