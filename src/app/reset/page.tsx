@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { apiJson } from '@/lib/client/api';
 
-export default function ResetPage() {
+function ResetForm() {
   const searchParams = useSearchParams();
   const [token, setToken] = useState(searchParams.get('token') ?? '');
   const [password, setPassword] = useState('');
@@ -123,5 +123,13 @@ export default function ResetPage() {
         )}
       </div>
     </main>
+  );
+}
+
+export default function ResetPage() {
+  return (
+    <Suspense>
+      <ResetForm />
+    </Suspense>
   );
 }
