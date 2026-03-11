@@ -1,4 +1,4 @@
-import { Provider } from '@prisma/client';
+import { Provider, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 
 export async function createThread(
@@ -14,7 +14,7 @@ export async function createThread(
       provider,
       model,
       systemPrompt: systemPrompt || null,
-      settings: settings ?? undefined
+      settings: settings ? (settings as Prisma.InputJsonValue) : undefined
     }
   });
 }
