@@ -83,11 +83,130 @@ button {
 .landing-container {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 60px 24px 80px;
+  padding: 40px 24px 60px;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   justify-content: center;
+  gap: 32px;
+}
+
+/* Landing Nav */
+.landing-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  background: linear-gradient(135deg, var(--surface), var(--surface-2));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  width: fit-content;
+  box-shadow: 0 4px 16px rgba(31, 27, 22, 0.06);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.home-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--accent) !important;
+  transition: opacity 0.2s ease;
+}
+
+.home-link:hover {
+  opacity: 0.75;
+}
+
+.nav-separator {
+  color: var(--border);
+  font-size: 0.9rem;
+}
+
+.nav-project-name {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Credit links below Streaming First card */
+.card-credit {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.card-credit a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  transition: all 0.2s ease;
+}
+
+.card-credit a:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(229, 111, 46, 0.06);
+  transform: translateY(-1px);
+}
+
+/* Responsive: Landing */
+@media (max-width: 768px) {
+  .landing-container {
+    padding: 24px 16px 40px;
+    gap: 24px;
+  }
+
+  .hero {
+    padding: 28px 20px;
+    border-radius: 20px;
+    gap: 24px;
+  }
+
+  .hero h1 {
+    font-size: 1.75rem;
+  }
+
+  .hero p {
+    font-size: 0.95rem;
+  }
+
+  .hero-actions {
+    flex-direction: column;
+  }
+
+  .hero-actions .button {
+    width: 100%;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero {
+    padding: 22px 16px;
+    border-radius: 16px;
+  }
+
+  .hero h1 {
+    font-size: 1.45rem;
+  }
+
+  .landing-nav {
+    padding: 8px 14px;
+  }
+
+  .home-link,
+  .nav-project-name {
+    font-size: 0.8rem;
+  }
 }
 
 .hero {
@@ -100,6 +219,28 @@ button {
   border: 1px solid var(--border);
   border-radius: 28px;
   box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  position: relative;
+  overflow: hidden;
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(ellipse at 30% 20%, rgba(229, 111, 46, 0.06) 0%, transparent 50%),
+              radial-gradient(ellipse at 70% 80%, rgba(47, 127, 119, 0.05) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero > * {
+  position: relative;
+  z-index: 1;
 }
 
 .hero h1 {
@@ -124,13 +265,14 @@ button {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 12px 18px;
+  padding: 12px 22px;
   border-radius: 999px;
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent), #d4602a);
   color: #fff;
   font-weight: 600;
   border: 1px solid transparent;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+  box-shadow: 0 4px 14px rgba(229, 111, 46, 0.3);
 }
 
 .button.secondary {
@@ -145,8 +287,8 @@ button {
 }
 
 .button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 20px rgba(229, 111, 46, 0.25);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(229, 111, 46, 0.35);
 }
 
 .button.danger:hover {
@@ -156,11 +298,14 @@ button {
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 4px 10px;
+  padding: 5px 14px;
   border-radius: 999px;
-  background: var(--surface-2);
+  background: linear-gradient(135deg, var(--surface-2), var(--bg));
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
 }
 
 .grid {
@@ -169,18 +314,21 @@ button {
 }
 
 .card {
-  background: var(--surface);
+  background: linear-gradient(145deg, var(--surface), var(--bg));
   border: 1px solid var(--border);
   border-radius: 20px;
-  padding: 20px;
+  padding: 22px;
   box-shadow: 0 12px 32px rgba(31, 27, 22, 0.08);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .hero .card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 16px 40px rgba(229, 111, 46, 0.2);
+  transform: translateY(-5px);
+  box-shadow: 0 18px 44px rgba(229, 111, 46, 0.22);
   cursor: pointer;
+  border-color: rgba(229, 111, 46, 0.25);
 }
 
 .card h3 {
