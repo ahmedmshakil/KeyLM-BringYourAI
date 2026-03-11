@@ -57,7 +57,7 @@ export async function appendMessage(
       role,
       content,
       clientRequestId,
-      metadata
+      metadata: metadata ? (metadata as Prisma.InputJsonValue) : undefined
     }
   });
 }
