@@ -6,19 +6,20 @@ import remarkGfm from 'remark-gfm';
 import { apiJson } from '@/lib/client/api';
 import { readSseStream } from '@/lib/client/sse';
 
-const PROVIDERS = [
+const KEY_PROVIDERS = [
   { id: 'openai', name: 'OpenAI', detail: 'GPT models, strong reasoning' },
   { id: 'gemini', name: 'Gemini', detail: 'Google multimodal family' },
   { id: 'anthropic', name: 'Anthropic', detail: 'Claude models, safe defaults' }
 ] as const;
 
-type ProviderId = (typeof PROVIDERS)[number]['id'];
+type KeyProviderId = (typeof KEY_PROVIDERS)[number]['id'];
+type RuntimeProviderId = KeyProviderId | 'groq';
 
 type User = { id: string; email: string };
 
 type KeyInfo = {
   id: string;
-  provider: ProviderId;
+  provider: KeyProviderId;
   keyMask: string;
   status: string;
   createdAt: string;
@@ -29,15 +30,21 @@ type KeyInfo = {
 type ModelInfo = {
   id: string;
   displayName: string;
-  provider: ProviderId;
+  provider: KeyProviderId;
   capabilities: { streaming: boolean; vision: boolean; tools: boolean; json: boolean };
   contextWindow?: number;
   category?: string;
 };
 
+type UsageInfo = {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+};
+
 type ThreadInfo = {
   id: string;
-  provider: ProviderId;
+  provider: RuntimeProviderId;
   model: string;
   title?: string | null;
   status: string;
@@ -50,16 +57,38 @@ type MessageInfo = {
   role: 'user' | 'assistant';
   content: string;
   createdAt: string;
+  usage?: UsageInfo;
 };
 
 type ThreadDetail = {
   id: string;
-  provider: ProviderId;
+  provider: RuntimeProviderId;
   model: string;
   systemPrompt?: string | null;
   settings?: Record<string, unknown> | null;
   messages: MessageInfo[];
 };
+
+type FreeUsageInfo = {
+  provider: 'groq';
+  model: string;
+  user: {
+    limit: number;
+    used: number;
+    remaining: number;
+    exhausted: boolean;
+  };
+  global: {
+    limit: number;
+    used: number;
+    remaining: number;
+    exhausted: boolean;
+  };
+  status: 'available' | 'user_exhausted' | 'global_exhausted' | 'disabled';
+  resetAt: string;
+};
+
+const FREE_NOTICE_THRESHOLDS = [5, 10];
 
 const truncateWords = (value: string, limit: number) => {
   const cleaned = value.replace(/\s+/g, ' ').trim();
@@ -69,6 +98,38 @@ const truncateWords = (value: string, limit: number) => {
   const words = cleaned.split(' ');
   const snippet = words.slice(0, limit).join(' ');
   return words.length > limit ? `${snippet}...` : snippet;
+};
+
+const formatResetTime = (value?: string) => {
+  if (!value) {
+    return '';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short'
+  }).format(new Date(value));
+};
+
+const formatUsageParts = (usage?: UsageInfo) => {
+  if (!usage) {
+    return [];
+  }
+
+  const parts: string[] = [];
+  if (typeof usage.promptTokens === 'number') {
+    parts.push(`Input Tokens: ${usage.promptTokens}`);
+  }
+  if (typeof usage.completionTokens === 'number') {
+    parts.push(`Output Tokens: ${usage.completionTokens}`);
+  }
+  if (typeof usage.totalTokens === 'number') {
+    parts.push(`Total Tokens used: ${usage.totalTokens}`);
+  }
+  return parts;
 };
 
 export default function AppPage() {
@@ -81,41 +142,64 @@ export default function AppPage() {
   const [resetLink, setResetLink] = useState('');
   const [authNotice, setAuthNotice] = useState('');
   const [authNoticeTone, setAuthNoticeTone] = useState<'error' | 'success'>('error');
-  const [providers, setProviders] = useState<Record<ProviderId, KeyInfo[]>>({
+  const [providers, setProviders] = useState<Record<KeyProviderId, KeyInfo[]>>({
     openai: [],
     gemini: [],
     anthropic: []
   });
-  const [keyInputs, setKeyInputs] = useState<Record<ProviderId, string>>({
+  const [keyInputs, setKeyInputs] = useState<Record<KeyProviderId, string>>({
     openai: '',
     gemini: '',
     anthropic: ''
   });
-  const [models, setModels] = useState<Record<ProviderId, ModelInfo[]>>({
+  const [models, setModels] = useState<Record<KeyProviderId, ModelInfo[]>>({
     openai: [],
     gemini: [],
     anthropic: []
   });
-  const [modelsMeta, setModelsMeta] = useState<Record<ProviderId, { stale: boolean; fetchedAt?: string }>>({
+  const [modelsMeta, setModelsMeta] = useState<Record<KeyProviderId, { stale: boolean; fetchedAt?: string }>>({
     openai: { stale: false },
     gemini: { stale: false },
     anthropic: { stale: false }
   });
-  const [currentProvider, setCurrentProvider] = useState<ProviderId>('openai');
+  const [currentProvider, setCurrentProvider] = useState<KeyProviderId>('openai');
   const [selectedModel, setSelectedModel] = useState('');
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [activeThread, setActiveThread] = useState<ThreadDetail | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ThreadInfo | null>(null);
   const [messageInput, setMessageInput] = useState('');
   const [notice, setNotice] = useState('');
+  const [freeThresholdNotice, setFreeThresholdNotice] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [isDark, setIsDark] = useState(false);
+  const [freeUsage, setFreeUsage] = useState<FreeUsageInfo | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const freeNoticeTimeoutRef = useRef<number | null>(null);
+  const previousFreeUsedRef = useRef<number | null>(null);
 
   const connectedProviders = useMemo(() => {
-    return PROVIDERS.filter((provider) => providers[provider.id].some((key) => key.status === 'active'))
+    return KEY_PROVIDERS.filter((provider) => providers[provider.id].some((key) => key.status === 'active'))
       .map((provider) => provider.id);
   }, [providers]);
+
+  const activeThreadIsFree = activeThread?.provider === 'groq';
+  const freeModeAvailable = freeUsage?.status === 'available';
+  const shouldShowFreeSource = activeThreadIsFree || (connectedProviders.length === 0 && freeModeAvailable);
+
+  const loadFreeUsage = async (): Promise<FreeUsageInfo | null> => {
+    if (!user) {
+      setFreeUsage(null);
+      return null;
+    }
+    try {
+      const res = await apiJson<FreeUsageInfo>('/api/usage/free');
+      setFreeUsage(res);
+      return res;
+    } catch {
+      setFreeUsage(null);
+      return null;
+    }
+  };
 
   useEffect(() => {
     const init = async () => {
@@ -150,16 +234,17 @@ export default function AppPage() {
 
   useEffect(() => {
     if (!user) {
+      setFreeUsage(null);
       return;
     }
     const load = async () => {
-      const nextProviders: Record<ProviderId, KeyInfo[]> = {
+      const nextProviders: Record<KeyProviderId, KeyInfo[]> = {
         openai: [],
         gemini: [],
         anthropic: []
       };
       await Promise.all(
-        PROVIDERS.map(async (provider) => {
+        KEY_PROVIDERS.map(async (provider) => {
           try {
             const res = await apiJson<{ keys: KeyInfo[] }>(`/api/providers/${provider.id}/keys`);
             nextProviders[provider.id] = res.keys;
@@ -172,6 +257,60 @@ export default function AppPage() {
     };
     load();
   }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setFreeUsage(null);
+      return;
+    }
+    loadFreeUsage();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || !freeUsage || freeUsage.status !== 'available') {
+      previousFreeUsedRef.current = freeUsage?.user.used ?? null;
+      return;
+    }
+
+    const currentUsed = freeUsage.user.used;
+    const previousUsed = previousFreeUsedRef.current;
+    const reachedThreshold = FREE_NOTICE_THRESHOLDS.find(
+      (threshold) =>
+        currentUsed === threshold &&
+        previousUsed !== null &&
+        previousUsed < threshold
+    );
+
+    if (reachedThreshold) {
+      const noticeKey = `keylm:free-threshold-notice:${user.id}:${freeUsage.resetAt}:${reachedThreshold}`;
+      const alreadyShown = window.localStorage.getItem(noticeKey) === '1';
+      if (alreadyShown) {
+        previousFreeUsedRef.current = currentUsed;
+        return;
+      }
+      const nextMessage =
+        `You have reached ${reachedThreshold} free KeyLM requests today. For better output and deeper thinking, connect your own Gemini, OpenAI, or Anthropic key.`;
+      setFreeThresholdNotice(nextMessage);
+      window.localStorage.setItem(noticeKey, '1');
+      if (freeNoticeTimeoutRef.current) {
+        window.clearTimeout(freeNoticeTimeoutRef.current);
+      }
+      freeNoticeTimeoutRef.current = window.setTimeout(() => {
+        setFreeThresholdNotice('');
+        freeNoticeTimeoutRef.current = null;
+      }, 6000);
+    }
+
+    previousFreeUsedRef.current = currentUsed;
+  }, [freeUsage, user]);
+
+  useEffect(() => {
+    return () => {
+      if (freeNoticeTimeoutRef.current) {
+        window.clearTimeout(freeNoticeTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -200,7 +339,7 @@ export default function AppPage() {
     loadModels(currentProvider);
   }, [user, currentProvider, connectedProviders]);
 
-  const loadModels = async (provider: ProviderId, refresh = false) => {
+  const loadModels = async (provider: KeyProviderId, refresh = false) => {
     if (!connectedProviders.includes(provider)) {
       setModels((prev) => ({ ...prev, [provider]: [] }));
       setSelectedModel('');
@@ -278,7 +417,9 @@ export default function AppPage() {
     setUser(null);
     setActiveThread(null);
     setThreads([]);
+    setFreeUsage(null);
     setNotice('');
+    setFreeThresholdNotice('');
     setAuthView('login');
     setAuthNotice('');
     setAuthNoticeTone('error');
@@ -288,7 +429,7 @@ export default function AppPage() {
     setResetEmail('');
   };
 
-  const handleConnectKey = async (provider: ProviderId) => {
+  const handleConnectKey = async (provider: KeyProviderId) => {
     const key = keyInputs[provider].trim();
     if (!key) {
       setNotice('Paste a key to connect.');
@@ -309,26 +450,54 @@ export default function AppPage() {
     }
   };
 
-  const handleDeleteKey = async (provider: ProviderId, keyId: string) => {
+  const handleDeleteKey = async (provider: KeyProviderId, keyId: string) => {
     await apiJson(`/api/providers/${provider}/keys/${keyId}`, { method: 'DELETE' });
     const res = await apiJson<{ keys: KeyInfo[] }>(`/api/providers/${provider}/keys`);
     setProviders((prev) => ({ ...prev, [provider]: res.keys }));
   };
 
   const handleNewThread = async (): Promise<ThreadDetail | null> => {
-    if (!selectedModel) {
-      setNotice('Pick a model before starting a thread.');
-      return null;
-    }
     try {
+      if (connectedProviders.length === 0) {
+        const freeStatus = freeUsage ?? (await loadFreeUsage());
+        if (freeStatus?.status !== 'available') {
+          const message =
+            freeStatus?.status === 'global_exhausted'
+              ? 'No global free API requests are left today. Connect your own API key to continue.'
+              : freeStatus?.status === 'user_exhausted'
+                ? 'Your free daily request limit is over. Connect your own API key to continue chatting.'
+                : 'KeyLM free mode is not available right now. Connect your own API key to continue.';
+          setNotice(message);
+          return null;
+        }
+
+        const res = await apiJson<{ thread: ThreadDetail }>('/api/threads', {
+          method: 'POST',
+          body: JSON.stringify({
+            mode: 'free'
+          })
+        });
+        const created = res.thread;
+        setActiveThread(created);
+        const list = await apiJson<{ threads: ThreadInfo[] }>('/api/threads');
+        setThreads(list.threads);
+        return created;
+      }
+
+      if (!selectedModel) {
+        setNotice('Pick a model before starting a thread.');
+        return null;
+      }
+
       const res = await apiJson<{ thread: ThreadDetail }>('/api/threads', {
         method: 'POST',
         body: JSON.stringify({
+          mode: 'byok',
           provider: currentProvider,
           model: selectedModel
         })
       });
-      const created = { ...res.thread, messages: [] };
+      const created = res.thread;
       setActiveThread(created);
       const list = await apiJson<{ threads: ThreadInfo[] }>('/api/threads');
       setThreads(list.threads);
@@ -343,8 +512,10 @@ export default function AppPage() {
     try {
       const res = await apiJson<{ thread: ThreadDetail }>(`/api/threads/${threadId}`);
       setActiveThread(res.thread);
-      setCurrentProvider(res.thread.provider);
-      setSelectedModel(res.thread.model);
+      if (res.thread.provider !== 'groq') {
+        setCurrentProvider(res.thread.provider);
+        setSelectedModel(res.thread.model);
+      }
     } catch (error) {
       setNotice('Failed to load thread.');
     }
@@ -408,7 +579,7 @@ export default function AppPage() {
 
     const controller = new AbortController();
     abortRef.current = controller;
-    const shouldStream = currentProvider !== 'gemini';
+    const shouldStream = thread.provider !== 'gemini';
 
     try {
       const res = await fetch(`/api/threads/${thread.id}/messages`, {
@@ -454,6 +625,18 @@ export default function AppPage() {
             });
           }
           if (event.event === 'done') {
+            const payload = JSON.parse(event.data) as { message: MessageInfo };
+            setActiveThread((prev) => {
+              if (!prev) {
+                return prev;
+              }
+              const updated = [...prev.messages];
+              const idx = updated.findIndex((msg) => msg.id === optimisticAssistant.id);
+              if (idx >= 0) {
+                updated[idx] = payload.message;
+              }
+              return { ...prev, messages: updated };
+            });
             setStreaming(false);
           }
           if (event.event === 'error') {
@@ -483,12 +666,7 @@ export default function AppPage() {
           const updated = [...prev.messages];
           const idx = updated.findIndex((msg) => msg.id === optimisticAssistant.id);
           if (idx >= 0) {
-            updated[idx] = {
-              ...updated[idx],
-              id: payload.message.id,
-              content: payload.message.content,
-              createdAt: payload.message.createdAt
-            };
+            updated[idx] = payload.message;
           }
           return { ...prev, messages: updated };
         });
@@ -499,16 +677,28 @@ export default function AppPage() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Failed to send message');
       setStreaming(false);
+    } finally {
+      await loadFreeUsage();
     }
   };
 
   const handleStop = () => {
     abortRef.current?.abort();
     setStreaming(false);
+    loadFreeUsage();
   };
 
   const isResetView = authView === 'reset';
   const isLoginView = authView === 'login';
+  const freeResetLabel = formatResetTime(freeUsage?.resetAt);
+  const freeStatusMessage =
+    freeUsage?.status === 'global_exhausted'
+      ? 'No global free API left today. Add your own Gemini, OpenAI, or Anthropic key to keep chatting.'
+      : freeUsage?.status === 'user_exhausted'
+        ? `Your ${freeUsage?.user.limit ?? 50} daily free requests are used up. Add your own Gemini, OpenAI, or Anthropic key to continue.`
+        : freeUsage?.status === 'disabled'
+          ? 'KeyLM free mode is unavailable right now. Add your own Gemini, OpenAI, or Anthropic key to continue.'
+          : '';
 
   if (loading) {
     return <main className="container">Loading...</main>;
@@ -645,40 +835,62 @@ export default function AppPage() {
       {/* Header: Email left, Workspace center, Sign out right */}
       <header className="main-header">
         <div className="header-left">
-          <span className="badge">Signed in</span>
-          <h2>{user.email}</h2>
+          <p className="header-session">
+            <span className="header-session-label">Signed in:</span>
+            <span className="header-session-email">{user.email}</span>
+          </p>
         </div>
         <div className="header-center">
-          <div className="workspace-controls">
-            <select
-              className="select"
-              value={currentProvider}
-              onChange={(event) => setCurrentProvider(event.target.value as ProviderId)}
-            >
-              {PROVIDERS.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className="select"
-              value={selectedModel}
-              onChange={(event) => setSelectedModel(event.target.value)}
-              disabled={!connectedProviders.includes(currentProvider)}
-            >
-              {models[currentProvider]?.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.displayName}
-                </option>
-              ))}
-            </select>
-            <button className="button secondary" onClick={() => loadModels(currentProvider, true)}>
-              Refresh models
-            </button>
-          </div>
-          {modelsMeta[currentProvider]?.stale && (
-            <p className="tag">Showing cached models. Refresh to retry.</p>
+          {shouldShowFreeSource ? (
+            <div className="free-source-banner">
+              <span className="badge glow">KeyLM Free</span>
+              <div>
+                <strong>{freeUsage?.model ?? activeThread?.model ?? 'moonshotai/kimi-k2-instruct-0905'}</strong>
+                {/* <p>Shared Groq pool. Connect your own key for stronger quality or when free quota runs out.</p> */}
+              </div>
+            </div>
+          ) : connectedProviders.length === 0 ? (
+            <div className="free-source-banner free-source-banner-muted">
+              <span className="badge">Bring Your Key</span>
+              <div>
+                <strong>Personal API key required</strong>
+                <p>Connect Gemini, OpenAI, or Anthropic to start a new BYOK thread.</p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="workspace-controls">
+                <select
+                  className="select"
+                  value={currentProvider}
+                  onChange={(event) => setCurrentProvider(event.target.value as KeyProviderId)}
+                >
+                  {KEY_PROVIDERS.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="select"
+                  value={selectedModel}
+                  onChange={(event) => setSelectedModel(event.target.value)}
+                  disabled={!connectedProviders.includes(currentProvider)}
+                >
+                  {models[currentProvider]?.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.displayName}
+                    </option>
+                  ))}
+                </select>
+                <button className="button secondary" onClick={() => loadModels(currentProvider, true)}>
+                  Refresh models
+                </button>
+              </div>
+              {modelsMeta[currentProvider]?.stale && (
+                <p className="tag">Showing cached models. Refresh to retry.</p>
+              )}
+            </>
           )}
         </div>
         <div className="header-right">
@@ -697,6 +909,7 @@ export default function AppPage() {
       </header>
 
       {notice && <p className="tag notice-bar">{notice}</p>}
+      {freeThresholdNotice && <p className="tag notice-bar">{freeThresholdNotice}</p>}
 
       {/* Main content: Threads left, Chat center, Providers right */}
       <div className="app-shell-new">
@@ -723,7 +936,10 @@ export default function AppPage() {
                       onClick={() => handleSelectThread(thread.id)}
                       type="button"
                     >
-                      <div className="thread-title">{threadTitle}</div>
+                      <div className="thread-title">
+                        <span className="thread-title-text">{threadTitle}</span>
+                        {thread.provider === 'groq' && <span className="thread-pill">KeyLM Free</span>}
+                      </div>
                       <div className="thread-preview">{messagePreview}</div>
                     </button>
                     <button
@@ -751,6 +967,13 @@ export default function AppPage() {
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {msg.content}
                   </ReactMarkdown>
+                  {msg.role === 'assistant' && formatUsageParts(msg.usage).length > 0 && (
+                    <div className="message-usage">
+                      {formatUsageParts(msg.usage).map((part) => (
+                        <span key={`${msg.id}-${part}`}>{part}</span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -783,11 +1006,36 @@ export default function AppPage() {
 
         {/* Right sidebar - Providers */}
         <aside className="providers-sidebar">
+          <div className="card free-usage-card">
+            <div className="free-usage-header">
+              <div>
+                <h3>Free quota</h3>
+                <p>Shared KeyLM fallback</p>
+              </div>
+              <span className={`status ${freeUsage?.status === 'available' ? 'connected' : 'idle'}`}>
+                {freeUsage?.status === 'available' ? 'Available' : 'BYOK needed'}
+              </span>
+            </div>
+            <div className="free-usage-grid">
+              <div className="free-usage-stat">
+                <strong>{freeUsage?.user.remaining ?? 0}</strong>
+                <span>User requests left</span>
+              </div>
+              <div className="free-usage-stat">
+                <strong>{freeUsage?.global.remaining ?? 0}</strong>
+                <span>Global requests left</span>
+              </div>
+            </div>
+            <p className="tag">
+              Resets {freeResetLabel || 'soon'}
+            </p>
+            {freeStatusMessage && <p className="free-usage-warning">{freeStatusMessage}</p>}
+          </div>
           <div className="card">
             <h3>Providers</h3>
             <p>Connect your API keys</p>
           </div>
-          {PROVIDERS.map((provider) => {
+          {KEY_PROVIDERS.map((provider) => {
             const keys = providers[provider.id];
             const connected = keys.some((key) => key.status === 'active');
             return (

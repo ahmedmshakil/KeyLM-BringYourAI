@@ -373,13 +373,39 @@ button {
 
 .header-left {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
 }
 
-.header-left h2 {
+.header-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-size: 1rem;
   font-weight: 600;
+  color: var(--text);
+}
+
+.header-session-label {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.header-session-email {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(229, 111, 46, 0.22);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.38) 100%),
+    linear-gradient(135deg, rgba(229, 111, 46, 0.14), rgba(47, 127, 119, 0.12));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    0 8px 18px rgba(31, 27, 22, 0.08);
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .header-center {
@@ -395,6 +421,31 @@ button {
   gap: 12px;
   align-items: center;
   justify-content: center;
+}
+
+.free-source-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(229, 111, 46, 0.12), rgba(47, 127, 119, 0.08));
+  max-width: 100%;
+}
+
+.free-source-banner strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.free-source-banner p {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.free-source-banner-muted {
+  background: linear-gradient(135deg, var(--surface), var(--surface-2));
 }
 
 .header-right {
@@ -498,7 +549,7 @@ button {
 
 .app-shell-new {
   display: grid;
-  grid-template-columns: 300px 1fr 300px;
+  grid-template-columns: 300px 1fr 340px;
   gap: 20px;
   flex: 1;
   min-height: 0;
@@ -623,6 +674,56 @@ button {
   gap: 12px;
   height: 100%;
   overflow-y: auto;
+}
+
+.free-usage-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.free-usage-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.free-usage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.free-usage-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.free-usage-stat strong {
+  font-size: 1.3rem;
+}
+
+.free-usage-stat span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.free-usage-model {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.free-usage-warning {
+  font-size: 0.88rem;
+  color: var(--warning);
 }
 
 .provider-card {
@@ -929,12 +1030,33 @@ button {
 }
 
 .thread-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 600;
   font-size: 0.95rem;
   color: var(--ink);
+  min-width: 0;
+}
+
+.thread-title-text {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.thread-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(229, 111, 46, 0.25);
+  background: rgba(229, 111, 46, 0.12);
+  color: var(--warning);
+  font-size: 0.72rem;
+  flex-shrink: 0;
 }
 
 .thread-model {
@@ -1013,6 +1135,25 @@ button {
   border-radius: 16px;
   border: 1px solid var(--border);
   background: var(--surface);
+}
+
+.message-usage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.message-usage span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
 }
 
 /* Markdown styling inside chat bubbles */
@@ -1461,7 +1602,7 @@ ol.docs-list li {
 
 @media (max-width: 1200px) {
   .app-shell-new {
-    grid-template-columns: 260px 1fr 280px;
+    grid-template-columns: 260px 1fr 320px;
     gap: 16px;
   }
 }
@@ -1514,6 +1655,12 @@ ol.docs-list li {
   .header-left,
   .header-right {
     justify-content: center;
+  }
+
+  .free-source-banner {
+    width: 100%;
+    justify-content: center;
+    text-align: left;
   }
 
   .docs-hero {
