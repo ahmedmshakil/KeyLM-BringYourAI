@@ -2,7 +2,7 @@ import { Provider } from '@prisma/client';
 import { requireUser } from '@/lib/auth';
 import { errorResponse, jsonResponse } from '@/lib/http';
 import { messageCreateSchema } from '@/lib/validators';
-import { getThread, appendMessage, findMessageByRequestId } from '@/lib/services/threadService';
+import { getThread, appendMessage, findMessagesByRequestId } from '@/lib/services/threadService';
 import { getActiveKey } from '@/lib/services/keyService';
 import { decryptSecret } from '@/lib/crypto';
 import { getProviderAdapter } from '@/lib/providers';
@@ -10,6 +10,10 @@ import { buildChatMessages } from '@/lib/services/chatService';
 import { sseResponse } from '@/lib/streaming';
 import { takeToken } from '@/lib/rateLimit';
 import { prisma } from '@/lib/db';
+import { FreeQuotaError, getFreeTierConfig, reserveFreeRequest } from '@/lib/freeTier';
+import { toMessageDto } from '@/lib/services/threadDtos';
+import { UsageInfo } from '@/lib/providers/types';
+import { getRuntimeProvider } from '@/lib/services/threadRuntime';
 
 const buildThreadTitle = (content: string) => {
   const cleaned = content.replace(/\s+/g, ' ').trim();
@@ -22,12 +26,15 @@ const buildThreadTitle = (content: string) => {
   return words.length > limit ? `${snippet}...` : snippet;
 };
 
-export async function POST(request: Request, { params }: { params: { threadId: string } }) {
+type MessageParams = Promise<{ threadId: string }>;
+
+export async function POST(request: Request, { params }: { params: MessageParams }) {
   const user = await requireUser();
   if (!user) {
     return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
   }
-  const thread = await getThread(user.id, params.threadId);
+  const { threadId } = await params;
+  const thread = await getThread(user.id, threadId);
   if (!thread) {
     return errorResponse({ code: 'not_found', message: 'Thread not found' }, 404);
   }
@@ -44,13 +51,49 @@ export async function POST(request: Request, { params }: { params: { threadId: s
   }
 
   if (body.requestId) {
-    const existing = await findMessageByRequestId(thread.id, body.requestId);
-    if (existing) {
-      return jsonResponse({ message: existing });
+    const existingMessages = await findMessagesByRequestId(thread.id, body.requestId);
+    const existingAssistant = existingMessages.find((message) => message.role === 'assistant');
+    if (existingAssistant) {
+      return jsonResponse({ message: toMessageDto(existingAssistant) });
     }
   }
 
-  const userMessage = await appendMessage(thread.id, 'user', body.content, body.requestId);
+  const runtimeProvider = getRuntimeProvider(thread);
+  let rawKey = '';
+  let runtimeModel = thread.model;
+  if (runtimeProvider === 'groq') {
+    try {
+      const { apiKey, model } = getFreeTierConfig();
+      rawKey = apiKey;
+      runtimeModel = model;
+      await reserveFreeRequest(user.id);
+    } catch (error) {
+      if (error instanceof FreeQuotaError) {
+        return errorResponse({ code: error.code, message: error.message }, 403);
+      }
+
+      return errorResponse(
+        { code: 'free_unavailable', message: 'KeyLM free mode is not configured right now.' },
+        503
+      );
+    }
+  } else {
+    const key = await getActiveKey(user.id, runtimeProvider as Provider);
+    if (!key) {
+      return errorResponse({ code: 'key_missing', message: 'Connect a key first' }, 400);
+    }
+    await prisma.providerKey.update({
+      where: { id: key.id },
+      data: { lastUsedAt: new Date() }
+    });
+    rawKey = decryptSecret(key.keyCiphertext);
+  }
+
+  const existingMessages = body.requestId ? await findMessagesByRequestId(thread.id, body.requestId) : [];
+  const existingUserMessage = existingMessages.find((message) => message.role === 'user');
+  const userMessage =
+    existingUserMessage ??
+    (await appendMessage(thread.id, 'user', body.content, body.requestId));
   if (!thread.title || !thread.title.trim()) {
     const firstUserMessage = [...thread.messages, userMessage].find(
       (message) => message.role === 'user' && message.content.trim()
@@ -66,41 +109,63 @@ export async function POST(request: Request, { params }: { params: { threadId: s
     }
   }
 
-  const key = await getActiveKey(user.id, thread.provider as Provider);
-  if (!key) {
-    return errorResponse({ code: 'key_missing', message: 'Connect a key first' }, 400);
-  }
-  await prisma.providerKey.update({
-    where: { id: key.id },
-    data: { lastUsedAt: new Date() }
-  });
-
-  const rawKey = decryptSecret(key.keyCiphertext);
-  const adapter = getProviderAdapter(thread.provider as Provider);
+  const adapter = getProviderAdapter(runtimeProvider);
   const messages = buildChatMessages(thread, thread.messages.concat(userMessage));
 
   const settings = (thread.settings as { temperature?: number; maxTokens?: number }) ?? {};
+  const buildMetadata = (usage?: UsageInfo) => (usage ? { usage } : undefined);
 
   // Enable streaming for all providers including Gemini
   const shouldStream = body.stream !== false;
   if (!shouldStream) {
-    const result = await adapter.chat(rawKey, thread.model, messages, settings, request.signal);
-    const assistant = await appendMessage(thread.id, 'assistant', result.fullText, body.requestId);
-    return jsonResponse({ message: assistant });
+    try {
+      const result = await adapter.chat(rawKey, runtimeModel, messages, settings, request.signal);
+      const assistant = await appendMessage(
+        thread.id,
+        'assistant',
+        result.fullText,
+        body.requestId,
+        buildMetadata(result.usage)
+      );
+      return jsonResponse({ message: toMessageDto(assistant) });
+    } catch (error) {
+      return errorResponse(
+        {
+          code: 'provider_error',
+          message: error instanceof Error ? error.message : 'Failed to send message'
+        },
+        502
+      );
+    }
   }
 
   return sseResponse(async (send, signal) => {
     try {
       const abort = new AbortController();
       signal.addEventListener('abort', () => abort.abort());
-      const stream = adapter.streamChat(rawKey, thread.model, messages, settings, abort.signal);
+      const stream = adapter.streamChat(rawKey, runtimeModel, messages, settings, abort.signal);
       let fullText = '';
-      for await (const chunk of stream) {
-        fullText += chunk.delta;
-        send('delta', { delta: chunk.delta });
+      let usage: UsageInfo | undefined;
+
+      while (true) {
+        const next = await stream.next();
+        if (next.done) {
+          fullText = next.value.fullText;
+          usage = next.value.usage;
+          break;
+        }
+
+        fullText += next.value.delta;
+        send('delta', { delta: next.value.delta });
       }
-      const assistant = await appendMessage(thread.id, 'assistant', fullText, body.requestId);
-      send('done', { message: assistant });
+      const assistant = await appendMessage(
+        thread.id,
+        'assistant',
+        fullText,
+        body.requestId,
+        buildMetadata(usage)
+      );
+      send('done', { message: toMessageDto(assistant) });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'An error occurred';
       send('error', { message: errorMessage });
