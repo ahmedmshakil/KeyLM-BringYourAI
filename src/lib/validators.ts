@@ -1,22 +1,37 @@
 import { z } from 'zod';
 
-export const providerSchema = z.enum(['openai', 'gemini', 'anthropic']);
+export const keyProviderSchema = z.enum(['openai', 'gemini', 'anthropic']);
+export const runtimeProviderSchema = z.enum(['openai', 'gemini', 'anthropic', 'groq']);
 
 export const keyCreateSchema = z.object({
   key: z.string().min(8)
 });
 
-export const threadCreateSchema = z.object({
-  provider: providerSchema,
+const threadSettingsSchema = z
+  .object({
+    temperature: z.number().min(0).max(2).optional(),
+    maxTokens: z.number().min(1).max(8192).optional()
+  })
+  .optional();
+
+const byokThreadCreateSchema = z.object({
+  mode: z.literal('byok'),
+  provider: keyProviderSchema,
   model: z.string().min(1),
   systemPrompt: z.string().optional(),
-  settings: z
-    .object({
-      temperature: z.number().min(0).max(2).optional(),
-      maxTokens: z.number().min(1).max(8192).optional()
-    })
-    .optional()
+  settings: threadSettingsSchema
 });
+
+const freeThreadCreateSchema = z.object({
+  mode: z.literal('free'),
+  systemPrompt: z.string().optional(),
+  settings: threadSettingsSchema
+});
+
+export const threadCreateSchema = z.discriminatedUnion('mode', [
+  byokThreadCreateSchema,
+  freeThreadCreateSchema
+]);
 
 export const messageCreateSchema = z.object({
   content: z.string().min(1),

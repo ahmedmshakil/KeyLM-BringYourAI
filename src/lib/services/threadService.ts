@@ -65,3 +65,10 @@ export async function appendMessage(
 export async function findMessageByRequestId(threadId: string, requestId: string) {
   return prisma.message.findFirst({ where: { threadId, clientRequestId: requestId, role: 'assistant' } });
 }
+
+export async function findMessagesByRequestId(threadId: string, requestId: string) {
+  return prisma.message.findMany({
+    where: { threadId, clientRequestId: requestId },
+    orderBy: { createdAt: 'asc' }
+  });
+}

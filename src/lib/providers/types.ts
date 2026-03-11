@@ -1,4 +1,5 @@
-export type ProviderId = 'openai' | 'gemini' | 'anthropic';
+export type ProviderId = 'openai' | 'gemini' | 'anthropic' | 'groq';
+export type KeyProviderId = Exclude<ProviderId, 'groq'>;
 
 export type NormalizedModel = {
   id: string;
@@ -24,13 +25,20 @@ export type ChatSettings = {
   maxTokens?: number;
 };
 
+export type UsageInfo = {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+};
+
 export type StreamChunk = {
   delta: string;
+  usage?: UsageInfo;
 };
 
 export type StreamResult = {
   fullText: string;
-  usage?: Record<string, number>;
+  usage?: UsageInfo;
 };
 
 export type ProviderAdapter = {
