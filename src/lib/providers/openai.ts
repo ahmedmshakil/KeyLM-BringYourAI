@@ -1,5 +1,6 @@
 import { ChatMessage, ChatSettings, NormalizedModel, StreamChunk, StreamResult } from '@/lib/providers/types';
 import { parseSseStream } from '@/lib/providers/sse';
+import { fromOpenAIUsage, readProviderError } from '@/lib/providers/utils';
 
 const BASE_URL = 'https://api.openai.com/v1';
 
@@ -14,8 +15,7 @@ export async function validateKey(key: string) {
     }
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || 'OpenAI validation failed');
+    throw new Error(await readProviderError(res, 'OpenAI validation failed'));
   }
 }
 
@@ -26,8 +26,7 @@ export async function listModels(key: string): Promise<NormalizedModel[]> {
     }
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || 'OpenAI models fetch failed');
+    throw new Error(await readProviderError(res, 'OpenAI models fetch failed'));
   }
   const payload = (await res.json()) as { data: Array<{ id: string }> };
   const chatModels = payload.data.filter((model) => isChatModel(model.id));
@@ -70,8 +69,7 @@ export async function chat(
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || 'OpenAI chat failed');
+    throw new Error(await readProviderError(res, 'OpenAI chat failed'));
   }
 
   const payload = (await res.json()) as {
@@ -79,7 +77,7 @@ export async function chat(
     usage?: Record<string, number>;
   };
   const fullText = payload.choices?.[0]?.message?.content ?? '';
-  return { fullText, usage: payload.usage };
+  return { fullText, usage: fromOpenAIUsage(payload.usage) };
 }
 
 export async function* streamChat(
@@ -100,24 +98,31 @@ export async function* streamChat(
       messages,
       temperature: settings.temperature ?? 0.7,
       max_tokens: settings.maxTokens,
-      stream: true
+      stream: true,
+      stream_options: {
+        include_usage: true
+      }
     }),
     signal
   });
 
   if (!res.ok || !res.body) {
-    const text = await res.text();
-    throw new Error(text || 'OpenAI stream failed');
+    throw new Error(await readProviderError(res, 'OpenAI stream failed'));
   }
 
   let fullText = '';
+  let usage: StreamResult['usage'];
   for await (const event of parseSseStream(res.body)) {
     if (event.data === '[DONE]') {
       break;
     }
     const json = JSON.parse(event.data) as {
       choices?: Array<{ delta?: { content?: string } }>;
+      usage?: Record<string, number>;
     };
+    if (json.usage) {
+      usage = fromOpenAIUsage(json.usage);
+    }
     const delta = json.choices?.[0]?.delta?.content;
     if (delta) {
       fullText += delta;
@@ -125,5 +130,5 @@ export async function* streamChat(
     }
   }
 
-  return { fullText };
+  return { fullText, usage };
 }

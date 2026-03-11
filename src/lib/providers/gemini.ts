@@ -1,4 +1,5 @@
 import { ChatMessage, ChatSettings, NormalizedModel, StreamChunk, StreamResult } from '@/lib/providers/types';
+import { fromGeminiUsage, readProviderError } from '@/lib/providers/utils';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1';
 
@@ -21,16 +22,14 @@ function splitSystem(messages: ChatMessage[]) {
 export async function validateKey(key: string) {
   const res = await fetch(`${BASE_URL}/models?key=${encodeURIComponent(key)}`);
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || 'Gemini validation failed');
+    throw new Error(await readProviderError(res, 'Gemini validation failed'));
   }
 }
 
 export async function listModels(key: string): Promise<NormalizedModel[]> {
   const res = await fetch(`${BASE_URL}/models?key=${encodeURIComponent(key)}`);
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || 'Gemini models fetch failed');
+    throw new Error(await readProviderError(res, 'Gemini models fetch failed'));
   }
   const payload = (await res.json()) as {
     models: Array<{ name: string; displayName?: string; supportedGenerationMethods?: string[] }>;
@@ -83,15 +82,7 @@ export async function chat(
   );
 
   if (!res.ok) {
-    const text = await res.text();
-    let errorMessage = 'Gemini chat failed';
-    try {
-      const errorData = JSON.parse(text);
-      errorMessage = errorData?.error?.message || text || errorMessage;
-    } catch {
-      errorMessage = text || errorMessage;
-    }
-    throw new Error(errorMessage);
+    throw new Error(await readProviderError(res, 'Gemini chat failed'));
   }
 
   const payload = (await res.json()) as {
@@ -100,7 +91,7 @@ export async function chat(
   };
   const parts = payload.candidates?.[0]?.content?.parts ?? [];
   const fullText = parts.map((part) => part.text ?? '').join('');
-  return { fullText, usage: payload.usageMetadata };
+  return { fullText, usage: fromGeminiUsage(payload.usageMetadata) };
 }
 
 export async function* streamChat(
@@ -133,18 +124,11 @@ export async function* streamChat(
   );
 
   if (!res.ok || !res.body) {
-    const text = await res.text();
-    let errorMessage = 'Gemini stream failed';
-    try {
-      const errorData = JSON.parse(text);
-      errorMessage = errorData?.error?.message || text || errorMessage;
-    } catch {
-      errorMessage = text || errorMessage;
-    }
-    throw new Error(errorMessage);
+    throw new Error(await readProviderError(res, 'Gemini stream failed'));
   }
 
   let fullText = '';
+  let usage: StreamResult['usage'];
   
   // Gemini with alt=sse returns proper SSE format
   const reader = res.body.getReader();
@@ -171,7 +155,11 @@ export async function* streamChat(
       try {
         const payload = JSON.parse(dataMatch[1]) as {
           candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          usageMetadata?: Record<string, number>;
         };
+        if (payload.usageMetadata) {
+          usage = fromGeminiUsage(payload.usageMetadata);
+        }
         const delta = payload.candidates?.[0]?.content?.parts?.[0]?.text;
         if (delta) {
           fullText += delta;
@@ -190,7 +178,11 @@ export async function* streamChat(
       try {
         const payload = JSON.parse(dataMatch[1]) as {
           candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          usageMetadata?: Record<string, number>;
         };
+        if (payload.usageMetadata) {
+          usage = fromGeminiUsage(payload.usageMetadata);
+        }
         const delta = payload.candidates?.[0]?.content?.parts?.[0]?.text;
         if (delta) {
           fullText += delta;
@@ -202,5 +194,5 @@ export async function* streamChat(
     }
   }
 
-  return { fullText };
+  return { fullText, usage };
 }

@@ -1,5 +1,6 @@
 import { ChatMessage, ChatSettings, NormalizedModel, StreamChunk, StreamResult } from '@/lib/providers/types';
 import { parseSseStream } from '@/lib/providers/sse';
+import { finalizeUsage, fromAnthropicUsage, readProviderError } from '@/lib/providers/utils';
 
 const BASE_URL = 'https://api.anthropic.com/v1';
 const VERSION = '2023-06-01';
@@ -25,8 +26,7 @@ export async function validateKey(key: string) {
     }
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || 'Anthropic validation failed');
+    throw new Error(await readProviderError(res, 'Anthropic validation failed'));
   }
 }
 
@@ -38,8 +38,7 @@ export async function listModels(key: string): Promise<NormalizedModel[]> {
     }
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || 'Anthropic models fetch failed');
+    throw new Error(await readProviderError(res, 'Anthropic models fetch failed'));
   }
   const payload = (await res.json()) as { data: Array<{ id: string }> };
   return payload.data.map((model) => ({
@@ -82,8 +81,7 @@ export async function chat(
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || 'Anthropic chat failed');
+    throw new Error(await readProviderError(res, 'Anthropic chat failed'));
   }
 
   const payload = (await res.json()) as {
@@ -91,7 +89,7 @@ export async function chat(
     usage?: Record<string, number>;
   };
   const fullText = payload.content?.map((block) => block.text ?? '').join('') ?? '';
-  return { fullText, usage: payload.usage };
+  return { fullText, usage: fromAnthropicUsage(payload.usage) };
 }
 
 export async function* streamChat(
@@ -121,11 +119,12 @@ export async function* streamChat(
   });
 
   if (!res.ok || !res.body) {
-    const text = await res.text();
-    throw new Error(text || 'Anthropic stream failed');
+    throw new Error(await readProviderError(res, 'Anthropic stream failed'));
   }
 
   let fullText = '';
+  let promptTokens: number | undefined;
+  let completionTokens: number | undefined;
   for await (const event of parseSseStream(res.body)) {
     if (!event.data) {
       continue;
@@ -133,7 +132,14 @@ export async function* streamChat(
     const payload = JSON.parse(event.data) as {
       delta?: { text?: string };
       type?: string;
+      usage?: Record<string, number>;
+      message?: { usage?: Record<string, number> };
     };
+    if (event.event === 'message_start') {
+      const usage = fromAnthropicUsage(payload.message?.usage);
+      promptTokens = usage?.promptTokens;
+      completionTokens = usage?.completionTokens;
+    }
     if (event.event === 'content_block_delta') {
       const delta = payload.delta?.text;
       if (delta) {
@@ -141,10 +147,20 @@ export async function* streamChat(
         yield { delta };
       }
     }
+    if (event.event === 'message_delta') {
+      const usage = fromAnthropicUsage(payload.usage);
+      completionTokens = usage?.completionTokens ?? completionTokens;
+    }
     if (event.event === 'message_stop') {
       break;
     }
   }
 
-  return { fullText };
+  return {
+    fullText,
+    usage: finalizeUsage({
+      promptTokens,
+      completionTokens
+    })
+  };
 }
