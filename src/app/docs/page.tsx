@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 export const metadata: Metadata = {
   title: 'Docs - KeyLM',
-  description: 'Project documentation for the KeyLM BYOK chat app.'
+  description: 'Project documentation for the KeyLM hybrid free-tier and BYOK chat app.'
 };
 
 const toc = [
@@ -29,7 +29,7 @@ const quickStartSteps = [
   },
   {
     title: 'Create the environment file',
-    code: 'cp .env.example .env\n# set DATABASE_URL, APP_AUTH_SECRET, APP_ENCRYPTION_KEY'
+    code: 'cp .env.example .env\n# set DATABASE_URL, APP_AUTH_SECRET, APP_ENCRYPTION_KEY, GROQ_API_KEY'
   },
   {
     title: 'Generate an encryption key',
@@ -47,8 +47,8 @@ const quickStartSteps = [
 
 const highlights = [
   {
-    title: 'BYOK Key Vault',
-    description: 'Keys are validated on add and encrypted at rest with AES-256-GCM.'
+    title: 'Hybrid Access',
+    description: 'New accounts get a shared Groq fallback before switching to personal keys.'
   },
   {
     title: 'Model Catalog',
@@ -60,7 +60,7 @@ const highlights = [
   },
   {
     title: 'Threaded History',
-    description: 'Threads persist provider, model, settings, and message history.'
+    description: 'Threads persist provider, model, settings, message history, and token usage.'
   }
 ];
 
@@ -75,7 +75,7 @@ const architectureModules = [
   },
   {
     title: 'Provider adapters',
-    description: 'OpenAI, Gemini, and Anthropic adapters normalize models and streaming.'
+    description: 'OpenAI, Gemini, Anthropic, and Groq adapters normalize models, streaming, and usage.'
   },
   {
     title: 'Model service',
@@ -84,6 +84,10 @@ const architectureModules = [
   {
     title: 'Thread service',
     description: 'Threads and messages are persisted with idempotent request IDs.'
+  },
+  {
+    title: 'Free-tier quotas',
+    description: 'Per-user and global daily counters gate the shared Groq fallback.'
   }
 ];
 
@@ -147,16 +151,26 @@ const endpointGroups = [
     ]
   },
   {
+    title: 'Free usage',
+    items: [
+      {
+        method: 'GET',
+        path: '/api/usage/free',
+        description: 'Return the current user/global Groq free quota snapshot.'
+      }
+    ]
+  },
+  {
     title: 'Threads and messages',
     items: [
-      { method: 'POST', path: '/api/threads', description: 'Create a new thread.' },
+      { method: 'POST', path: '/api/threads', description: 'Create a BYOK or KeyLM Free thread.' },
       { method: 'GET', path: '/api/threads', description: 'List threads for the user.' },
       { method: 'GET', path: '/api/threads/:threadId', description: 'Get a thread and its messages.' },
       { method: 'DELETE', path: '/api/threads/:threadId', description: 'Delete a thread.' },
       {
         method: 'POST',
         path: '/api/threads/:threadId/messages',
-        description: 'Send a message and stream SSE deltas.'
+        description: 'Send a message, stream SSE deltas, and persist token usage.'
       }
     ]
   }
@@ -181,7 +195,7 @@ const dataModels = [
   },
   {
     title: 'Message',
-    fields: 'threadId, role, content, providerMessageId, clientRequestId'
+    fields: 'threadId, role, content, providerMessageId, clientRequestId, metadata.usage'
   },
   {
     title: 'AuditLog',
@@ -190,6 +204,14 @@ const dataModels = [
   {
     title: 'PasswordResetToken',
     fields: 'tokenHash, expiresAt, usedAt'
+  },
+  {
+    title: 'UserDailyFreeUsage',
+    fields: 'userId, day, count'
+  },
+  {
+    title: 'GlobalDailyFreeUsage',
+    fields: 'day, count'
   }
 ];
 
@@ -201,8 +223,8 @@ export default function DocsPage() {
           <span className="badge">Docs</span>
           <h1>KeyLM Project Documentation</h1>
           <p>
-            KeyLM is a BYOK multi-provider chat app built with Next.js App Router, Prisma, and Postgres.
-            This page documents the product flow, backend APIs, and data model in one place.
+            KeyLM is a hybrid free-tier and BYOK multi-provider chat app built with Next.js App Router,
+            Prisma, and Postgres. This page documents the product flow, backend APIs, and data model in one place.
           </p>
           <div className="hero-actions">
             <Link className="button" href="/app">
@@ -226,7 +248,8 @@ export default function DocsPage() {
       <section id="overview" className="card docs-section">
         <h2>Overview</h2>
         <p className="tagline">
-          A single workspace for OpenAI, Gemini, and Anthropic where users keep control of their own keys.
+          A single workspace where users can start on a shared Groq free pool, then move to their own
+          OpenAI, Gemini, or Anthropic keys.
         </p>
         <div className="docs-grid">
           {highlights.map((item) => (
@@ -271,6 +294,30 @@ export default function DocsPage() {
             <dd>32-byte base64 key for encrypting provider secrets.</dd>
           </div>
           <div>
+            <dt>GROQ_API_KEY</dt>
+            <dd>Server-only API key used for the shared KeyLM Free Groq pool.</dd>
+          </div>
+          <div>
+            <dt>GROQ_BASE_URL</dt>
+            <dd>Groq base URL, defaults to https://api.groq.com/openai/v1.</dd>
+          </div>
+          <div>
+            <dt>GROQ_FREE_MODEL</dt>
+            <dd>Fixed shared free model, defaults to moonshotai/kimi-k2-instruct-0905.</dd>
+          </div>
+          <div>
+            <dt>GROQ_FREE_FALLBACK_MODELS</dt>
+            <dd>Optional comma-separated Groq fallback models if the primary free model is unavailable.</dd>
+          </div>
+          <div>
+            <dt>FREE_USER_DAILY_LIMIT</dt>
+            <dd>Per-user daily free request limit, defaults to 50.</dd>
+          </div>
+          <div>
+            <dt>FREE_GLOBAL_DAILY_LIMIT</dt>
+            <dd>Global daily free request limit, defaults to 1000.</dd>
+          </div>
+          <div>
             <dt>RATE_LIMIT_PER_MINUTE</dt>
             <dd>Optional request limit for chat and password reset endpoints.</dd>
           </div>
@@ -285,11 +332,11 @@ export default function DocsPage() {
         <h2>User Flow</h2>
         <ol className="docs-list">
           <li>Create an account or sign in.</li>
-          <li>Add a provider key and validate it with a lightweight request.</li>
-          <li>Load the model list for the connected provider.</li>
-          <li>Select a model and create a new thread.</li>
+          <li>Use KeyLM Free immediately if daily user/global Groq quota is still available.</li>
+          <li>Add a provider key and validate it with a lightweight request when you want BYOK mode.</li>
+          <li>Load the model list for connected providers and create BYOK threads.</li>
           <li>Send a message and stream responses via SSE.</li>
-          <li>Persist assistant output and continue the thread.</li>
+          <li>Persist assistant output, token usage, and continue the thread.</li>
         </ol>
         <div className="notice-bar">
           Streaming responses use server-sent events from the messages endpoint, with idempotency on requestId.
@@ -359,11 +406,13 @@ export default function DocsPage() {
       <section id="ux" className="card docs-section">
         <h2>UX Behavior</h2>
         <ul className="docs-list">
+          <li>Users without active keys can start on KeyLM Free while quota remains.</li>
           <li>Model dropdown appears only after a provider key is active.</li>
           <li>Model lists are cached for 24 hours and can be refreshed manually.</li>
-          <li>Threads are locked to the provider and model chosen at creation.</li>
+          <li>Threads are locked to the provider and model chosen at creation, including Groq free threads.</li>
+          <li>After 5 free requests, the UI shows a persistent reminder to connect a personal key for better output.</li>
           <li>Streaming responses show deltas in real time with stop support.</li>
-          <li>Key status is surfaced as active, invalid, or revoked.</li>
+          <li>Each assistant reply shows prompt, output, and total token usage when available.</li>
         </ul>
       </section>
 
@@ -371,6 +420,7 @@ export default function DocsPage() {
         <h2>Security</h2>
         <ul className="docs-list">
           <li>Provider keys are encrypted at rest and never returned in plaintext.</li>
+          <li>The shared Groq key stays server-side and is never exposed to clients.</li>
           <li>Passwords are hashed with bcrypt and sessions are signed server-side.</li>
           <li>Rate limiting protects chat streaming and password reset requests.</li>
           <li>Audit logs track key lifecycle events for traceability.</li>
@@ -384,6 +434,7 @@ export default function DocsPage() {
           <li>A key that was valid can be revoked later; validation endpoints update status.</li>
           <li>If a model refresh fails, cached models are served with a stale flag.</li>
           <li>Duplicate message requests are deduped via clientRequestId.</li>
+          <li>Free quota resets at 00:00 UTC for both the user bucket and the global pool.</li>
           <li>Rate limits return retryable errors with 429 responses.</li>
         </ul>
       </section>
@@ -392,8 +443,8 @@ export default function DocsPage() {
         <h2>Testing</h2>
         <ul className="docs-list">
           <li>Unit: provider adapters, crypto helpers, and validation schemas.</li>
-          <li>Integration: key validation, model caching, and thread persistence.</li>
-          <li>E2E: connect key, load models, stream chat, and save history.</li>
+          <li>Integration: key validation, free quota reservation, model caching, and thread persistence.</li>
+          <li>E2E: use KeyLM Free, exhaust quota, connect a key, stream chat, and save history.</li>
           <li>Security: verify secrets never leak to logs or responses.</li>
         </ul>
       </section>
