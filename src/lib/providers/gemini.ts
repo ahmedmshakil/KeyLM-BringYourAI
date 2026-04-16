@@ -1,5 +1,5 @@
 import { ChatMessage, ChatSettings, NormalizedModel, StreamChunk, StreamResult } from '@/lib/providers/types';
-import { fromGeminiUsage, readProviderError } from '@/lib/providers/utils';
+import { fetchWithTimeout, fromGeminiUsage, readProviderError } from '@/lib/providers/utils';
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1';
 
@@ -20,14 +20,14 @@ function splitSystem(messages: ChatMessage[]) {
 }
 
 export async function validateKey(key: string) {
-  const res = await fetch(`${BASE_URL}/models?key=${encodeURIComponent(key)}`);
+  const res = await fetchWithTimeout(`${BASE_URL}/models?key=${encodeURIComponent(key)}`);
   if (!res.ok) {
     throw new Error(await readProviderError(res, 'Gemini validation failed'));
   }
 }
 
 export async function listModels(key: string): Promise<NormalizedModel[]> {
-  const res = await fetch(`${BASE_URL}/models?key=${encodeURIComponent(key)}`);
+  const res = await fetchWithTimeout(`${BASE_URL}/models?key=${encodeURIComponent(key)}`);
   if (!res.ok) {
     throw new Error(await readProviderError(res, 'Gemini models fetch failed'));
   }
@@ -62,7 +62,7 @@ export async function chat(
   const { system, contents } = splitSystem(messages);
   // Ensure model path starts with 'models/' for Gemini API
   const modelPath = model.startsWith('models/') ? model : `models/${model}`;
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${BASE_URL}/${modelPath}:generateContent?key=${encodeURIComponent(key)}`,
     {
       method: 'POST',
@@ -104,7 +104,7 @@ export async function* streamChat(
   const { system, contents } = splitSystem(messages);
   // Ensure model path starts with 'models/' for Gemini API
   const modelPath = model.startsWith('models/') ? model : `models/${model}`;
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${BASE_URL}/${modelPath}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`,
     {
       method: 'POST',

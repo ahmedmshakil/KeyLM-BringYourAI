@@ -1,6 +1,6 @@
 import { ChatMessage, ChatSettings, NormalizedModel, StreamChunk, StreamResult } from '@/lib/providers/types';
 import { parseSseStream } from '@/lib/providers/sse';
-import { finalizeUsage, fromAnthropicUsage, readProviderError } from '@/lib/providers/utils';
+import { fetchWithTimeout, finalizeUsage, fromAnthropicUsage, readProviderError } from '@/lib/providers/utils';
 
 const BASE_URL = 'https://api.anthropic.com/v1';
 const VERSION = '2023-06-01';
@@ -19,7 +19,7 @@ function splitSystem(messages: ChatMessage[]) {
 }
 
 export async function validateKey(key: string) {
-  const res = await fetch(`${BASE_URL}/models`, {
+  const res = await fetchWithTimeout(`${BASE_URL}/models`, {
     headers: {
       'x-api-key': key,
       'anthropic-version': VERSION
@@ -31,7 +31,7 @@ export async function validateKey(key: string) {
 }
 
 export async function listModels(key: string): Promise<NormalizedModel[]> {
-  const res = await fetch(`${BASE_URL}/models`, {
+  const res = await fetchWithTimeout(`${BASE_URL}/models`, {
     headers: {
       'x-api-key': key,
       'anthropic-version': VERSION
@@ -62,7 +62,7 @@ export async function chat(
   signal?: AbortSignal
 ): Promise<StreamResult> {
   const { system, chat } = splitSystem(messages);
-  const res = await fetch(`${BASE_URL}/messages`, {
+  const res = await fetchWithTimeout(`${BASE_URL}/messages`, {
     method: 'POST',
     headers: {
       'x-api-key': key,
@@ -100,7 +100,7 @@ export async function* streamChat(
   signal?: AbortSignal
 ): AsyncGenerator<StreamChunk, StreamResult, void> {
   const { system, chat } = splitSystem(messages);
-  const res = await fetch(`${BASE_URL}/messages`, {
+  const res = await fetchWithTimeout(`${BASE_URL}/messages`, {
     method: 'POST',
     headers: {
       'x-api-key': key,

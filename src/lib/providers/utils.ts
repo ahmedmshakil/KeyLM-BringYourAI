@@ -1,5 +1,58 @@
 import { UsageInfo } from '@/lib/providers/types';
 
+const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
+
+function parseTimeout(raw: string | undefined) {
+  const parsed = Number.parseInt(raw ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_PROVIDER_TIMEOUT_MS;
+}
+
+export function getProviderTimeoutMs() {
+  return parseTimeout(process.env.PROVIDER_REQUEST_TIMEOUT_MS);
+}
+
+export async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit & { timeoutMs?: number } = {}
+) {
+  const { timeoutMs = getProviderTimeoutMs(), signal, ...requestInit } = init;
+  const controller = new AbortController();
+  const safeTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_PROVIDER_TIMEOUT_MS;
+  let timedOut = false;
+
+  const handleAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener('abort', handleAbort, { once: true });
+    }
+  }
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, safeTimeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...requestInit,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw new Error('Provider request timed out');
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    if (signal) {
+      signal.removeEventListener('abort', handleAbort);
+    }
+  }
+}
+
 function toPositiveNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }

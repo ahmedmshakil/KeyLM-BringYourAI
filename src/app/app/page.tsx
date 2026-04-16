@@ -579,7 +579,7 @@ export default function AppPage() {
 
     const controller = new AbortController();
     abortRef.current = controller;
-    const shouldStream = thread.provider !== 'gemini';
+    const shouldStream = true;
 
     try {
       const res = await fetch(`/api/threads/${thread.id}/messages`, {

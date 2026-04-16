@@ -1,7 +1,7 @@
 import { getFreeTierConfig } from '@/lib/freeTier';
 import { ChatMessage, ChatSettings, NormalizedModel, StreamChunk, StreamResult } from '@/lib/providers/types';
 import { parseSseStream } from '@/lib/providers/sse';
-import { fromOpenAIUsage, readProviderError } from '@/lib/providers/utils';
+import { fetchWithTimeout, fromOpenAIUsage, readProviderError } from '@/lib/providers/utils';
 
 function getBaseUrl() {
   return getFreeTierConfig().baseUrl;
@@ -49,7 +49,7 @@ async function createCompletionResponse(
   let lastError = 'Groq request failed';
 
   for (const candidate of candidates) {
-    const response = await fetch(`${getBaseUrl()}/chat/completions`, {
+    const response = await fetchWithTimeout(`${getBaseUrl()}/chat/completions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${key}`,
@@ -73,7 +73,7 @@ async function createCompletionResponse(
 }
 
 export async function validateKey(key: string) {
-  const res = await fetch(`${getBaseUrl()}/models`, {
+  const res = await fetchWithTimeout(`${getBaseUrl()}/models`, {
     headers: {
       Authorization: `Bearer ${key}`
     }

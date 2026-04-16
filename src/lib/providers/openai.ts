@@ -1,6 +1,6 @@
 import { ChatMessage, ChatSettings, NormalizedModel, StreamChunk, StreamResult } from '@/lib/providers/types';
 import { parseSseStream } from '@/lib/providers/sse';
-import { fromOpenAIUsage, readProviderError } from '@/lib/providers/utils';
+import { fetchWithTimeout, fromOpenAIUsage, readProviderError } from '@/lib/providers/utils';
 
 const BASE_URL = 'https://api.openai.com/v1';
 
@@ -9,7 +9,7 @@ function isChatModel(modelId: string) {
 }
 
 export async function validateKey(key: string) {
-  const res = await fetch(`${BASE_URL}/models`, {
+  const res = await fetchWithTimeout(`${BASE_URL}/models`, {
     headers: {
       Authorization: `Bearer ${key}`
     }
@@ -20,7 +20,7 @@ export async function validateKey(key: string) {
 }
 
 export async function listModels(key: string): Promise<NormalizedModel[]> {
-  const res = await fetch(`${BASE_URL}/models`, {
+  const res = await fetchWithTimeout(`${BASE_URL}/models`, {
     headers: {
       Authorization: `Bearer ${key}`
     }
@@ -52,7 +52,7 @@ export async function chat(
   settings: ChatSettings,
   signal?: AbortSignal
 ): Promise<StreamResult> {
-  const res = await fetch(`${BASE_URL}/chat/completions`, {
+  const res = await fetchWithTimeout(`${BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${key}`,
@@ -87,7 +87,7 @@ export async function* streamChat(
   settings: ChatSettings,
   signal?: AbortSignal
 ): AsyncGenerator<StreamChunk, StreamResult, void> {
-  const res = await fetch(`${BASE_URL}/chat/completions`, {
+  const res = await fetchWithTimeout(`${BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${key}`,
