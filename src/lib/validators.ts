@@ -3,8 +3,15 @@ import { z } from 'zod';
 export const keyProviderSchema = z.enum(['openai', 'gemini', 'anthropic']);
 export const runtimeProviderSchema = z.enum(['openai', 'gemini', 'anthropic', 'groq']);
 
+export const authEmailSchema = z.string().trim().min(3).max(320).email();
+export const authPasswordSchema = z.string().min(8).max(256);
+
+export function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
 export const keyCreateSchema = z.object({
-  key: z.string().min(8)
+  key: z.string().trim().min(8).max(4096)
 });
 
 const threadSettingsSchema = z
@@ -17,14 +24,14 @@ const threadSettingsSchema = z
 const byokThreadCreateSchema = z.object({
   mode: z.literal('byok'),
   provider: keyProviderSchema,
-  model: z.string().min(1),
-  systemPrompt: z.string().optional(),
+  model: z.string().trim().min(1).max(200),
+  systemPrompt: z.string().trim().max(8_000).optional(),
   settings: threadSettingsSchema
 });
 
 const freeThreadCreateSchema = z.object({
   mode: z.literal('free'),
-  systemPrompt: z.string().optional(),
+  systemPrompt: z.string().trim().max(8_000).optional(),
   settings: threadSettingsSchema
 });
 
@@ -34,7 +41,7 @@ export const threadCreateSchema = z.discriminatedUnion('mode', [
 ]);
 
 export const messageCreateSchema = z.object({
-  content: z.string().min(1),
-  requestId: z.string().optional(),
+  content: z.string().trim().min(1).max(40_000),
+  requestId: z.string().uuid().optional(),
   stream: z.boolean().optional().default(true)
 });
