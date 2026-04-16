@@ -23,13 +23,15 @@ function getSecret(): Buffer {
 
 export type SessionPayload = {
   sub: string;
+  ver: number;
   exp: number;
 };
 
-export function signSession(userId: string): string {
+export function signSession(userId: string, sessionVersion: number): string {
   const header = base64Url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const payload: SessionPayload = {
     sub: userId,
+    ver: sessionVersion,
     exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS
   };
   const payloadEnc = base64Url(JSON.stringify(payload));
@@ -53,7 +55,19 @@ export function verifySession(token: string): SessionPayload | null {
   if (sig.length !== expectedSig.length || !crypto.timingSafeEqual(sig, expectedSig)) {
     return null;
   }
-  const decoded = JSON.parse(fromBase64Url(payload).toString('utf8')) as SessionPayload;
+  let decoded: SessionPayload;
+  try {
+    decoded = JSON.parse(fromBase64Url(payload).toString('utf8')) as SessionPayload;
+  } catch {
+    return null;
+  }
+  if (
+    typeof decoded.sub !== 'string' ||
+    typeof decoded.ver !== 'number' ||
+    typeof decoded.exp !== 'number'
+  ) {
+    return null;
+  }
   if (decoded.exp < Math.floor(Date.now() / 1000)) {
     return null;
   }
