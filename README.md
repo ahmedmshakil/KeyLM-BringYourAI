@@ -27,10 +27,27 @@ npm install
 cp .env.example .env
 ```
 
+Set the required secrets before starting the app:
+
+- `APP_AUTH_SECRET` for signed auth sessions
+- `APP_ENCRYPTION_KEY` for encrypted provider keys
+- `GROQ_API_KEY` if you want KeyLM Free enabled
+
+Optional hardening/runtime settings:
+
+- `PASSWORD_RESET_TTL_MINUTES` to change reset-link expiry
+- `PROVIDER_REQUEST_TIMEOUT_MS` to cap upstream provider request duration
+
 
 ### 3. Setup database
 ```bash
-npm run prisma:migrate
+npx prisma migrate deploy
+```
+
+For local development, you can use:
+
+```bash
+npx prisma migrate dev
 ```
 
 ### 4. Run the app
