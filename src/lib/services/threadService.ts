@@ -51,15 +51,36 @@ export async function appendMessage(
   clientRequestId?: string,
   metadata?: Record<string, unknown>
 ) {
-  return prisma.message.create({
-    data: {
-      threadId,
-      role,
-      content,
-      clientRequestId,
-      metadata: metadata ? (metadata as Prisma.InputJsonValue) : undefined
+  try {
+    return await prisma.message.create({
+      data: {
+        threadId,
+        role,
+        content,
+        clientRequestId,
+        metadata: metadata ? (metadata as Prisma.InputJsonValue) : undefined
+      }
+    });
+  } catch (error) {
+    if (
+      clientRequestId &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      const existing = await prisma.message.findFirst({
+        where: {
+          threadId,
+          clientRequestId,
+          role
+        }
+      });
+      if (existing) {
+        return existing;
+      }
     }
-  });
+
+    throw error;
+  }
 }
 
 export async function findMessageByRequestId(threadId: string, requestId: string) {
