@@ -88,6 +88,33 @@ type FreeUsageInfo = {
   resetAt: string;
 };
 
+type BootstrapPayload = {
+  user: User | null;
+  providers: Record<KeyProviderId, KeyInfo[]>;
+  models: Record<KeyProviderId, ModelInfo[]>;
+  modelsMeta: Record<KeyProviderId, { stale: boolean; fetchedAt?: string }>;
+  threads: ThreadInfo[];
+  freeUsage: FreeUsageInfo | null;
+};
+
+const createEmptyProviders = (): Record<KeyProviderId, KeyInfo[]> => ({
+  openai: [],
+  gemini: [],
+  anthropic: []
+});
+
+const createEmptyModels = (): Record<KeyProviderId, ModelInfo[]> => ({
+  openai: [],
+  gemini: [],
+  anthropic: []
+});
+
+const createEmptyModelsMeta = (): Record<KeyProviderId, { stale: boolean; fetchedAt?: string }> => ({
+  openai: { stale: false },
+  gemini: { stale: false },
+  anthropic: { stale: false }
+});
+
 const FREE_NOTICE_THRESHOLDS = [5, 10];
 
 const truncateWords = (value: string, limit: number) => {
@@ -142,26 +169,16 @@ export default function AppPage() {
   const [resetLink, setResetLink] = useState('');
   const [authNotice, setAuthNotice] = useState('');
   const [authNoticeTone, setAuthNoticeTone] = useState<'error' | 'success'>('error');
-  const [providers, setProviders] = useState<Record<KeyProviderId, KeyInfo[]>>({
-    openai: [],
-    gemini: [],
-    anthropic: []
-  });
+  const [providers, setProviders] = useState<Record<KeyProviderId, KeyInfo[]>>(createEmptyProviders());
   const [keyInputs, setKeyInputs] = useState<Record<KeyProviderId, string>>({
     openai: '',
     gemini: '',
     anthropic: ''
   });
-  const [models, setModels] = useState<Record<KeyProviderId, ModelInfo[]>>({
-    openai: [],
-    gemini: [],
-    anthropic: []
-  });
-  const [modelsMeta, setModelsMeta] = useState<Record<KeyProviderId, { stale: boolean; fetchedAt?: string }>>({
-    openai: { stale: false },
-    gemini: { stale: false },
-    anthropic: { stale: false }
-  });
+  const [models, setModels] = useState<Record<KeyProviderId, ModelInfo[]>>(createEmptyModels());
+  const [modelsMeta, setModelsMeta] = useState<Record<KeyProviderId, { stale: boolean; fetchedAt?: string }>>(
+    createEmptyModelsMeta()
+  );
   const [currentProvider, setCurrentProvider] = useState<KeyProviderId>('openai');
   const [selectedModel, setSelectedModel] = useState('');
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
@@ -176,6 +193,9 @@ export default function AppPage() {
   const abortRef = useRef<AbortController | null>(null);
   const freeNoticeTimeoutRef = useRef<number | null>(null);
   const previousFreeUsedRef = useRef<number | null>(null);
+  const streamFlushTimeoutRef = useRef<number | null>(null);
+  const streamBufferedDeltaRef = useRef('');
+  const streamBufferedMessageIdRef = useRef<string | null>(null);
 
   const connectedProviders = useMemo(() => {
     return KEY_PROVIDERS.filter((provider) => providers[provider.id].some((key) => key.status === 'active'))
@@ -185,6 +205,149 @@ export default function AppPage() {
   const activeThreadIsFree = activeThread?.provider === 'groq';
   const freeModeAvailable = freeUsage?.status === 'available';
   const shouldShowFreeSource = activeThreadIsFree || (connectedProviders.length === 0 && freeModeAvailable);
+
+  const flushBufferedAssistantDelta = () => {
+    if (streamFlushTimeoutRef.current !== null) {
+      window.clearTimeout(streamFlushTimeoutRef.current);
+      streamFlushTimeoutRef.current = null;
+    }
+
+    const messageId = streamBufferedMessageIdRef.current;
+    const delta = streamBufferedDeltaRef.current;
+    if (!messageId || !delta) {
+      return;
+    }
+
+    streamBufferedDeltaRef.current = '';
+    setActiveThread((prev) => {
+      if (!prev) {
+        return prev;
+      }
+
+      const updatedMessages = [...prev.messages];
+      const index = updatedMessages.findIndex((message) => message.id === messageId);
+      if (index < 0) {
+        return prev;
+      }
+
+      updatedMessages[index] = {
+        ...updatedMessages[index],
+        content: updatedMessages[index].content + delta
+      };
+
+      return {
+        ...prev,
+        messages: updatedMessages
+      };
+    });
+  };
+
+  const queueAssistantDelta = (messageId: string, delta: string) => {
+    if (streamBufferedMessageIdRef.current && streamBufferedMessageIdRef.current !== messageId) {
+      flushBufferedAssistantDelta();
+    }
+
+    streamBufferedMessageIdRef.current = messageId;
+    streamBufferedDeltaRef.current += delta;
+
+    if (streamFlushTimeoutRef.current !== null) {
+      return;
+    }
+
+    streamFlushTimeoutRef.current = window.setTimeout(() => {
+      flushBufferedAssistantDelta();
+    }, 48);
+  };
+
+  const updateThreadSummary = (
+    thread: Pick<ThreadDetail, 'id' | 'provider' | 'model'>,
+    options: {
+      lastMessage?: string | null;
+      updatedAt?: string;
+      title?: string | null;
+    } = {}
+  ) => {
+    setThreads((prev) => {
+      const existing = prev.find((item) => item.id === thread.id);
+      const lastMessage = options.lastMessage ?? existing?.lastMessage ?? null;
+      const title =
+        options.title ??
+        existing?.title ??
+        (lastMessage ? truncateWords(lastMessage, 4) || null : existing?.title ?? null);
+
+      const next: ThreadInfo = {
+        id: thread.id,
+        provider: thread.provider,
+        model: thread.model,
+        title,
+        status: existing?.status ?? 'active',
+        updatedAt: options.updatedAt ?? existing?.updatedAt ?? new Date().toISOString(),
+        lastMessage
+      };
+
+      return [next, ...prev.filter((item) => item.id !== thread.id)];
+    });
+  };
+
+  const applyBootstrapPayload = (payload: BootstrapPayload) => {
+    if (!payload.user) {
+      setUser(null);
+      setProviders(createEmptyProviders());
+      setModels(createEmptyModels());
+      setModelsMeta(createEmptyModelsMeta());
+      setThreads([]);
+      setActiveThread(null);
+      setFreeUsage(null);
+      setCurrentProvider('openai');
+      setSelectedModel('');
+      return;
+    }
+
+    setUser(payload.user);
+    setProviders(payload.providers);
+    setModels(payload.models);
+    setModelsMeta(payload.modelsMeta);
+    setThreads(payload.threads);
+    setFreeUsage(payload.freeUsage);
+
+    const nextConnectedProviders = KEY_PROVIDERS.filter((provider) =>
+      payload.providers[provider.id].some((key) => key.status === 'active')
+    ).map((provider) => provider.id);
+
+    const resolvedProvider = nextConnectedProviders.includes(currentProvider)
+      ? currentProvider
+      : nextConnectedProviders[0] ?? 'openai';
+
+    setCurrentProvider(resolvedProvider);
+    setSelectedModel((prev) => {
+      const availableModels = payload.models[resolvedProvider] ?? [];
+      return availableModels.some((model) => model.id === prev) ? prev : availableModels[0]?.id ?? '';
+    });
+  };
+
+  const loadBootstrap = async (showLoading = false): Promise<BootstrapPayload | null> => {
+    if (showLoading) {
+      setLoading(true);
+    }
+
+    try {
+      const payload = await apiJson<BootstrapPayload>('/api/app/bootstrap');
+      applyBootstrapPayload(payload);
+      return payload;
+    } catch {
+      applyBootstrapPayload({
+        user: null,
+        providers: createEmptyProviders(),
+        models: createEmptyModels(),
+        modelsMeta: createEmptyModelsMeta(),
+        threads: [],
+        freeUsage: null
+      });
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const loadFreeUsage = async (): Promise<FreeUsageInfo | null> => {
     if (!user) {
@@ -202,17 +365,7 @@ export default function AppPage() {
   };
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        const res = await apiJson<{ user: User }>('/api/auth/me');
-        setUser(res.user);
-      } catch (error) {
-        setUser(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-    init();
+    void loadBootstrap(true);
   }, []);
 
   useEffect(() => {
@@ -231,40 +384,6 @@ export default function AppPage() {
     }
     window.localStorage.setItem('theme', isDark ? 'dark' : 'light');
   }, [isDark]);
-
-  useEffect(() => {
-    if (!user) {
-      setFreeUsage(null);
-      return;
-    }
-    const load = async () => {
-      const nextProviders: Record<KeyProviderId, KeyInfo[]> = {
-        openai: [],
-        gemini: [],
-        anthropic: []
-      };
-      await Promise.all(
-        KEY_PROVIDERS.map(async (provider) => {
-          try {
-            const res = await apiJson<{ keys: KeyInfo[] }>(`/api/providers/${provider.id}/keys`);
-            nextProviders[provider.id] = res.keys;
-          } catch (error) {
-            nextProviders[provider.id] = [];
-          }
-        })
-      );
-      setProviders(nextProviders);
-    };
-    load();
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) {
-      setFreeUsage(null);
-      return;
-    }
-    loadFreeUsage();
-  }, [user]);
 
   useEffect(() => {
     if (!user || !freeUsage || freeUsage.status !== 'available') {
@@ -309,6 +428,10 @@ export default function AppPage() {
       if (freeNoticeTimeoutRef.current) {
         window.clearTimeout(freeNoticeTimeoutRef.current);
       }
+
+      if (streamFlushTimeoutRef.current !== null) {
+        window.clearTimeout(streamFlushTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -316,28 +439,23 @@ export default function AppPage() {
     if (!user) {
       return;
     }
-    const loadThreads = async () => {
-      try {
-        const res = await apiJson<{ threads: ThreadInfo[] }>('/api/threads');
-        setThreads(res.threads);
-      } catch (error) {
-        setThreads([]);
-      }
-    };
-    loadThreads();
-  }, [user]);
 
-  useEffect(() => {
-    if (!user) {
-      return;
-    }
     if (!connectedProviders.includes(currentProvider)) {
       const fallback = connectedProviders[0] ?? 'openai';
       setCurrentProvider(fallback);
       return;
     }
+
+    const availableModels = models[currentProvider] ?? [];
+    if (availableModels.length > 0) {
+      if (!availableModels.some((model) => model.id === selectedModel)) {
+        setSelectedModel(availableModels[0]?.id ?? '');
+      }
+      return;
+    }
+
     loadModels(currentProvider);
-  }, [user, currentProvider, connectedProviders]);
+  }, [user, currentProvider, connectedProviders, models, selectedModel]);
 
   const loadModels = async (provider: KeyProviderId, refresh = false) => {
     if (!connectedProviders.includes(provider)) {
@@ -375,12 +493,12 @@ export default function AppPage() {
         method: 'POST',
         body: JSON.stringify({ email: authEmail, password: authPassword })
       });
-      setUser(res.user);
       setAuthEmail('');
       setAuthPassword('');
       setResetEmail('');
       setResetLink('');
       setAuthNotice('');
+      await loadBootstrap(true);
     } catch (error) {
       setAuthNotice(error instanceof Error ? error.message : 'Auth failed');
     }
@@ -417,6 +535,9 @@ export default function AppPage() {
     setUser(null);
     setActiveThread(null);
     setThreads([]);
+    setProviders(createEmptyProviders());
+    setModels(createEmptyModels());
+    setModelsMeta(createEmptyModelsMeta());
     setFreeUsage(null);
     setNotice('');
     setFreeThresholdNotice('');
@@ -436,15 +557,17 @@ export default function AppPage() {
       return;
     }
     try {
-      await apiJson(`/api/providers/${provider}/keys`, {
+      const res = await apiJson<{ key: KeyInfo }>(`/api/providers/${provider}/keys`, {
         method: 'POST',
         body: JSON.stringify({ key })
       });
       setKeyInputs((prev) => ({ ...prev, [provider]: '' }));
-      const res = await apiJson<{ keys: KeyInfo[] }>(`/api/providers/${provider}/keys`);
-      setProviders((prev) => ({ ...prev, [provider]: res.keys }));
+      setProviders((prev) => ({
+        ...prev,
+        [provider]: [res.key, ...prev[provider].filter((item) => item.id !== res.key.id)]
+      }));
       setCurrentProvider(provider);
-      loadModels(provider, true);
+      await loadModels(provider, true);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Failed to connect key');
     }
@@ -452,8 +575,10 @@ export default function AppPage() {
 
   const handleDeleteKey = async (provider: KeyProviderId, keyId: string) => {
     await apiJson(`/api/providers/${provider}/keys/${keyId}`, { method: 'DELETE' });
-    const res = await apiJson<{ keys: KeyInfo[] }>(`/api/providers/${provider}/keys`);
-    setProviders((prev) => ({ ...prev, [provider]: res.keys }));
+    setProviders((prev) => ({
+      ...prev,
+      [provider]: prev[provider].filter((key) => key.id !== keyId)
+    }));
   };
 
   const handleNewThread = async (): Promise<ThreadDetail | null> => {
@@ -479,8 +604,11 @@ export default function AppPage() {
         });
         const created = res.thread;
         setActiveThread(created);
-        const list = await apiJson<{ threads: ThreadInfo[] }>('/api/threads');
-        setThreads(list.threads);
+        updateThreadSummary(created, {
+          updatedAt: new Date().toISOString(),
+          lastMessage: null,
+          title: null
+        });
         return created;
       }
 
@@ -499,8 +627,11 @@ export default function AppPage() {
       });
       const created = res.thread;
       setActiveThread(created);
-      const list = await apiJson<{ threads: ThreadInfo[] }>('/api/threads');
-      setThreads(list.threads);
+      updateThreadSummary(created, {
+        updatedAt: new Date().toISOString(),
+        lastMessage: null,
+        title: null
+      });
       return created;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Failed to create thread');
@@ -575,11 +706,16 @@ export default function AppPage() {
     setActiveThread((prev) =>
       prev ? { ...prev, messages: [...prev.messages, optimisticUser, optimisticAssistant] } : prev
     );
+    updateThreadSummary(thread, {
+      lastMessage: content,
+      updatedAt: optimisticUser.createdAt
+    });
     setStreaming(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
     const shouldStream = true;
+    const shouldRefreshFreeUsage = thread.provider === 'groq';
 
     try {
       const res = await fetch(`/api/threads/${thread.id}/messages`, {
@@ -605,26 +741,16 @@ export default function AppPage() {
         }
         throw new Error(message);
       }
+
       if (shouldStream) {
         await readSseStream(res, (event) => {
           if (event.event === 'delta') {
             const payload = JSON.parse(event.data) as { delta: string };
-            setActiveThread((prev) => {
-              if (!prev) {
-                return prev;
-              }
-              const updated = [...prev.messages];
-              const idx = updated.findIndex((msg) => msg.id === optimisticAssistant.id);
-              if (idx >= 0) {
-                updated[idx] = {
-                  ...updated[idx],
-                  content: updated[idx].content + payload.delta
-                };
-              }
-              return { ...prev, messages: updated };
-            });
+            queueAssistantDelta(optimisticAssistant.id, payload.delta);
           }
+
           if (event.event === 'done') {
+            flushBufferedAssistantDelta();
             const payload = JSON.parse(event.data) as { message: MessageInfo };
             setActiveThread((prev) => {
               if (!prev) {
@@ -637,9 +763,15 @@ export default function AppPage() {
               }
               return { ...prev, messages: updated };
             });
+            updateThreadSummary(thread, {
+              lastMessage: payload.message.content,
+              updatedAt: payload.message.createdAt
+            });
             setStreaming(false);
           }
+
           if (event.event === 'error') {
+            flushBufferedAssistantDelta();
             let message = 'Streaming error.';
             if (event.data) {
               try {
@@ -659,6 +791,7 @@ export default function AppPage() {
         });
       } else {
         const payload = (await res.json()) as { message: MessageInfo };
+        flushBufferedAssistantDelta();
         setActiveThread((prev) => {
           if (!prev) {
             return prev;
@@ -670,22 +803,30 @@ export default function AppPage() {
           }
           return { ...prev, messages: updated };
         });
+        updateThreadSummary(thread, {
+          lastMessage: payload.message.content,
+          updatedAt: payload.message.createdAt
+        });
         setStreaming(false);
       }
-      const list = await apiJson<{ threads: ThreadInfo[] }>('/api/threads');
-      setThreads(list.threads);
     } catch (error) {
+      flushBufferedAssistantDelta();
       setNotice(error instanceof Error ? error.message : 'Failed to send message');
       setStreaming(false);
     } finally {
-      await loadFreeUsage();
+      if (shouldRefreshFreeUsage) {
+        await loadFreeUsage();
+      }
     }
   };
 
   const handleStop = () => {
+    flushBufferedAssistantDelta();
     abortRef.current?.abort();
     setStreaming(false);
-    loadFreeUsage();
+    if (activeThread?.provider === 'groq') {
+      loadFreeUsage();
+    }
   };
 
   const isResetView = authView === 'reset';
