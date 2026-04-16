@@ -4,6 +4,11 @@ import { keyProviderSchema } from '@/lib/validators';
 import { getModels } from '@/lib/services/modelService';
 import { errorResponse, jsonResponse } from '@/lib/http';
 
+function parseProvider(rawProvider: string) {
+  const parsed = keyProviderSchema.safeParse(rawProvider);
+  return parsed.success ? (parsed.data as Provider) : null;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ provider: string }> }
@@ -13,7 +18,10 @@ export async function GET(
     return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
   }
   const { provider: rawProvider } = await params;
-  const provider = keyProviderSchema.parse(rawProvider) as Provider;
+  const provider = parseProvider(rawProvider);
+  if (!provider) {
+    return errorResponse({ code: 'invalid_provider', message: 'Unsupported provider' }, 400);
+  }
   const url = new URL(request.url);
   const refresh = url.searchParams.get('refresh') === 'true';
   try {
@@ -24,6 +32,9 @@ export async function GET(
       fetchedAt: result.fetchedAt
     });
   } catch (error) {
+    if (error instanceof Error && error.message === 'No active key') {
+      return errorResponse({ code: 'key_missing', message: 'Connect a key first' }, 400);
+    }
     return errorResponse({ code: 'models_unavailable', message: 'Failed to load models' }, 502);
   }
 }
