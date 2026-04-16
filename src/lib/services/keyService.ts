@@ -30,11 +30,21 @@ export async function createKey(userId: string, provider: Provider, rawKey: stri
   return key;
 }
 
-export async function validateKey(userId: string, keyId: string) {
+async function getOwnedKey(userId: string, keyId: string, provider?: Provider) {
   const key = await prisma.providerKey.findFirst({ where: { id: keyId, userId } });
   if (!key) {
     throw new Error('Key not found');
   }
+
+  if (provider && key.provider !== provider) {
+    throw new Error('Key not found');
+  }
+
+  return key;
+}
+
+export async function validateKey(userId: string, keyId: string, provider?: Provider) {
+  const key = await getOwnedKey(userId, keyId, provider);
   const adapter = getProviderAdapter(key.provider);
   const rawKey = decryptSecret(key.keyCiphertext);
   await adapter.validateKey(rawKey);
@@ -53,11 +63,8 @@ export async function validateKey(userId: string, keyId: string) {
   return updated;
 }
 
-export async function revokeKey(userId: string, keyId: string) {
-  const key = await prisma.providerKey.findFirst({ where: { id: keyId, userId } });
-  if (!key) {
-    throw new Error('Key not found');
-  }
+export async function revokeKey(userId: string, keyId: string, provider?: Provider) {
+  const key = await getOwnedKey(userId, keyId, provider);
   const updated = await prisma.providerKey.update({
     where: { id: key.id },
     data: { status: 'revoked' }
@@ -78,12 +85,4 @@ export async function getActiveKey(userId: string, provider: Provider) {
     where: { userId, provider, status: 'active' },
     orderBy: { lastValidatedAt: 'desc' }
   });
-}
-
-export async function getRawKey(keyId: string) {
-  const key = await prisma.providerKey.findUnique({ where: { id: keyId } });
-  if (!key) {
-    throw new Error('Key not found');
-  }
-  return decryptSecret(key.keyCiphertext);
 }
