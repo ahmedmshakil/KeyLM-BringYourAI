@@ -19,6 +19,7 @@ model User {
   id            String        @id @default(cuid())
   email         String        @unique
   passwordHash  String
+  sessionVersion Int          @default(0)
   createdAt     DateTime      @default(now())
   passwordResetTokens PasswordResetToken[]
   providerKeys  ProviderKey[]
@@ -89,6 +90,7 @@ model Message {
 
   @@index([threadId, createdAt])
   @@index([threadId, clientRequestId])
+  @@unique([threadId, clientRequestId, role])
 }
 
 model AuditLog {
@@ -133,4 +135,14 @@ model GlobalDailyFreeUsage {
   count     Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model RateLimitBucket {
+  key       String   @id
+  count     Int      @default(0)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([expiresAt])
 }
