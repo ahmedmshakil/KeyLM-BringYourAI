@@ -45,7 +45,7 @@ export async function POST(request: Request) {
       const config = getFreeTierConfig();
       const thread = await createThread(
         user.id,
-        'openai' as Provider,
+        'groq' as Provider,
         config.model,
         body.systemPrompt,
         buildThreadSettings(body.settings, 'groq')

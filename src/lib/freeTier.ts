@@ -251,3 +251,40 @@ export async function reserveFreeRequest(userId: string): Promise<FreeUsageSnaps
 
   throw new Error('Failed to reserve free usage.');
 }
+
+export async function releaseFreeRequest(userId: string): Promise<FreeUsageSnapshot> {
+  const config = getFreeTierConfig();
+  if (!isFreeTierConfigured()) {
+    throw new Error('KeyLM free mode is not configured.');
+  }
+
+  const day = getQuotaDay();
+
+  return prisma.$transaction(
+    async (tx) => {
+      const [nextGlobal] = await tx.$queryRaw<CountRow[]>`
+        UPDATE "GlobalDailyFreeUsage"
+        SET "count" = GREATEST("count" - 1, 0), "updatedAt" = NOW()
+        WHERE "day" = ${day}
+        RETURNING "count"
+      `;
+      const [nextUser] = await tx.$queryRaw<CountRow[]>`
+        UPDATE "UserDailyFreeUsage"
+        SET "count" = GREATEST("count" - 1, 0), "updatedAt" = NOW()
+        WHERE "userId" = ${userId} AND "day" = ${day}
+        RETURNING "count"
+      `;
+
+      return buildStatus(
+        config.model,
+        config.userLimit,
+        config.globalLimit,
+        nextUser?.count ?? 0,
+        nextGlobal?.count ?? 0
+      );
+    },
+    {
+      isolationLevel: 'Serializable'
+    }
+  );
+}

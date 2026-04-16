@@ -10,7 +10,7 @@ import { buildChatMessages } from '@/lib/services/chatService';
 import { sseResponse } from '@/lib/streaming';
 import { takeToken } from '@/lib/rateLimit';
 import { prisma } from '@/lib/db';
-import { FreeQuotaError, getFreeTierConfig, reserveFreeRequest } from '@/lib/freeTier';
+import { FreeQuotaError, getFreeTierConfig, releaseFreeRequest, reserveFreeRequest } from '@/lib/freeTier';
 import { toMessageDto } from '@/lib/services/threadDtos';
 import { UsageInfo } from '@/lib/providers/types';
 import { getRuntimeProvider } from '@/lib/services/threadRuntime';
@@ -46,7 +46,7 @@ export async function POST(request: Request, { params }: { params: MessageParams
     return errorResponse({ code: 'invalid_request', message: 'Invalid request' }, 400);
   }
 
-  if (!takeToken(`user:${user.id}`)) {
+  if (!(await takeToken(`user:${user.id}`))) {
     return errorResponse({ code: 'rate_limited', message: 'Too many requests', retryable: true }, 429);
   }
 
@@ -61,12 +61,14 @@ export async function POST(request: Request, { params }: { params: MessageParams
   const runtimeProvider = getRuntimeProvider(thread);
   let rawKey = '';
   let runtimeModel = thread.model;
+  let freeRequestReserved = false;
   if (runtimeProvider === 'groq') {
     try {
       const { apiKey, model } = getFreeTierConfig();
       rawKey = apiKey;
       runtimeModel = model;
       await reserveFreeRequest(user.id);
+      freeRequestReserved = true;
     } catch (error) {
       if (error instanceof FreeQuotaError) {
         return errorResponse({ code: error.code, message: error.message }, 403);
@@ -129,6 +131,9 @@ export async function POST(request: Request, { params }: { params: MessageParams
       );
       return jsonResponse({ message: toMessageDto(assistant) });
     } catch (error) {
+      if (freeRequestReserved) {
+        await releaseFreeRequest(user.id).catch(() => undefined);
+      }
       return errorResponse(
         {
           code: 'provider_error',
@@ -140,6 +145,7 @@ export async function POST(request: Request, { params }: { params: MessageParams
   }
 
   return sseResponse(async (send, signal) => {
+    let assistantStored = false;
     try {
       const abort = new AbortController();
       signal.addEventListener('abort', () => abort.abort());
@@ -165,8 +171,12 @@ export async function POST(request: Request, { params }: { params: MessageParams
         body.requestId,
         buildMetadata(usage)
       );
+      assistantStored = true;
       send('done', { message: toMessageDto(assistant) });
     } catch (error) {
+      if (freeRequestReserved && !assistantStored) {
+        await releaseFreeRequest(user.id).catch(() => undefined);
+      }
       const errorMessage = error instanceof Error ? error.message : 'An error occurred';
       send('error', { message: errorMessage });
     }
