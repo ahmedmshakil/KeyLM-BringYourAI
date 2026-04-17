@@ -1,7 +1,9 @@
+import { cookies } from 'next/headers';
 import { Provider } from '@prisma/client';
 import { getSessionUser } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { getFreeUsageStatus } from '@/lib/freeTier';
+import { DEMO_COOKIE, buildDemoUsageSnapshot } from '@/lib/demoSession';
+import { getFreeTierConfig, getFreeUsageStatus, isFreeTierConfigured } from '@/lib/freeTier';
 import { jsonResponse } from '@/lib/http';
 import { listThreads } from '@/lib/services/threadService';
 import { getRuntimeProvider } from '@/lib/services/threadRuntime';
@@ -47,6 +49,12 @@ function createEmptyModelsMeta(): ModelsMetaSummary {
 }
 
 export async function GET() {
+  const cookieStore = await cookies();
+  const demo = buildDemoUsageSnapshot({
+    enabled: isFreeTierConfigured(),
+    model: getFreeTierConfig().model,
+    token: cookieStore.get(DEMO_COOKIE)?.value
+  });
   const user = await getSessionUser();
 
   if (!user) {
@@ -56,7 +64,8 @@ export async function GET() {
       models: createEmptyModels(),
       modelsMeta: createEmptyModelsMeta(),
       threads: [],
-      freeUsage: null
+      freeUsage: null,
+      demo
     });
   }
 
@@ -138,6 +147,7 @@ export async function GET() {
       updatedAt: thread.updatedAt,
       lastMessage: thread.messages[0]?.content ?? null
     })),
-    freeUsage
+    freeUsage,
+    demo
   });
 }

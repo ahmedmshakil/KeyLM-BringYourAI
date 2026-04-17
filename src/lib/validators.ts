@@ -45,3 +45,12 @@ export const messageCreateSchema = z.object({
   requestId: z.string().uuid().optional(),
   stream: z.boolean().optional().default(true)
 });
+
+const demoChatMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().trim().min(1).max(40_000)
+});
+
+export const demoChatSchema = z.object({
+  messages: z.array(demoChatMessageSchema).min(1).max(12)
+});
