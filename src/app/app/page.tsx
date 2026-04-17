@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { apiJson } from '@/lib/client/api';
@@ -88,6 +89,15 @@ type FreeUsageInfo = {
   resetAt: string;
 };
 
+type DemoUsageInfo = {
+  enabled: boolean;
+  model: string;
+  limit: number;
+  used: number;
+  remaining: number;
+  exhausted: boolean;
+};
+
 type BootstrapPayload = {
   user: User | null;
   providers: Record<KeyProviderId, KeyInfo[]>;
@@ -95,6 +105,7 @@ type BootstrapPayload = {
   modelsMeta: Record<KeyProviderId, { stale: boolean; fetchedAt?: string }>;
   threads: ThreadInfo[];
   freeUsage: FreeUsageInfo | null;
+  demo: DemoUsageInfo;
 };
 
 const createEmptyProviders = (): Record<KeyProviderId, KeyInfo[]> => ({
@@ -113,6 +124,15 @@ const createEmptyModelsMeta = (): Record<KeyProviderId, { stale: boolean; fetche
   openai: { stale: false },
   gemini: { stale: false },
   anthropic: { stale: false }
+});
+
+const createDefaultDemoUsage = (): DemoUsageInfo => ({
+  enabled: false,
+  model: 'moonshotai/kimi-k2-instruct-0905',
+  limit: 3,
+  used: 0,
+  remaining: 3,
+  exhausted: false
 });
 
 const FREE_NOTICE_THRESHOLDS = [5, 10];
@@ -159,7 +179,11 @@ const formatUsageParts = (usage?: UsageInfo) => {
   return parts;
 };
 
-export default function AppPage() {
+function AppPageClient() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedAuthView = searchParams.get('auth');
+  const demoModeRequested = searchParams.get('demo') === '1';
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [authView, setAuthView] = useState<'login' | 'register' | 'reset'>('login');
@@ -190,6 +214,9 @@ export default function AppPage() {
   const [streaming, setStreaming] = useState(false);
   const [isDark, setIsDark] = useState(false);
   const [freeUsage, setFreeUsage] = useState<FreeUsageInfo | null>(null);
+  const [demoUsage, setDemoUsage] = useState<DemoUsageInfo>(createDefaultDemoUsage());
+  const [demoMessages, setDemoMessages] = useState<MessageInfo[]>([]);
+  const [demoLimitModalOpen, setDemoLimitModalOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const freeNoticeTimeoutRef = useRef<number | null>(null);
   const previousFreeUsedRef = useRef<number | null>(null);
@@ -205,6 +232,7 @@ export default function AppPage() {
   const activeThreadIsFree = activeThread?.provider === 'groq';
   const freeModeAvailable = freeUsage?.status === 'available';
   const shouldShowFreeSource = activeThreadIsFree || (connectedProviders.length === 0 && freeModeAvailable);
+  const isDemoMode = demoModeRequested && !user;
 
   const flushBufferedAssistantDelta = () => {
     if (streamFlushTimeoutRef.current !== null) {
@@ -290,6 +318,7 @@ export default function AppPage() {
   };
 
   const applyBootstrapPayload = (payload: BootstrapPayload) => {
+    setDemoUsage(payload.demo);
     if (!payload.user) {
       setUser(null);
       setProviders(createEmptyProviders());
@@ -341,7 +370,8 @@ export default function AppPage() {
         models: createEmptyModels(),
         modelsMeta: createEmptyModelsMeta(),
         threads: [],
-        freeUsage: null
+        freeUsage: null,
+        demo: createDefaultDemoUsage()
       });
       return null;
     } finally {
@@ -374,6 +404,25 @@ export default function AppPage() {
       setIsDark(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (requestedAuthView === 'login' || requestedAuthView === 'register' || requestedAuthView === 'reset') {
+      setAuthView(requestedAuthView);
+      setAuthNotice('');
+      setAuthNoticeTone('error');
+      setResetLink('');
+    }
+  }, [requestedAuthView]);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    if (requestedAuthView || demoModeRequested) {
+      router.replace('/app');
+    }
+  }, [demoModeRequested, requestedAuthView, router, user]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -434,6 +483,17 @@ export default function AppPage() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (isDemoMode && demoUsage.exhausted) {
+      setDemoLimitModalOpen(true);
+      return;
+    }
+
+    if (!isDemoMode) {
+      setDemoLimitModalOpen(false);
+    }
+  }, [demoUsage.exhausted, isDemoMode]);
 
   useEffect(() => {
     if (!user) {
@@ -548,6 +608,10 @@ export default function AppPage() {
     setAuthEmail('');
     setAuthPassword('');
     setResetEmail('');
+  };
+
+  const navigateToAuth = (view: 'login' | 'register') => {
+    window.location.href = `/app?auth=${view}`;
   };
 
   const handleConnectKey = async (provider: KeyProviderId) => {
@@ -673,6 +737,91 @@ export default function AppPage() {
       setNotice(error instanceof Error ? error.message : 'Failed to delete thread');
     } finally {
       setDeleteTarget(null);
+    }
+  };
+
+  const handleSendDemoMessage = async () => {
+    const content = messageInput.trim();
+    if (!content || streaming) {
+      return;
+    }
+
+    if (demoUsage.exhausted) {
+      setDemoLimitModalOpen(true);
+      return;
+    }
+
+    setMessageInput('');
+    setNotice('');
+
+    const requestId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    const optimisticUser: MessageInfo = {
+      id: requestId,
+      role: 'user',
+      content,
+      createdAt
+    };
+    const optimisticAssistant: MessageInfo = {
+      id: `assistant-${requestId}`,
+      role: 'assistant',
+      content: '',
+      createdAt
+    };
+
+    const transcript = [...demoMessages, optimisticUser].map((message) => ({
+      role: message.role,
+      content: message.content
+    }));
+
+    setDemoMessages((prev) => [...prev, optimisticUser, optimisticAssistant]);
+    setStreaming(true);
+
+    try {
+      const res = await fetch('/api/demo/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: transcript })
+      });
+
+      const payload = (await res.json().catch(() => ({}))) as {
+        message?: MessageInfo;
+        demo?: DemoUsageInfo;
+        error?: { code?: string; message?: string };
+      };
+
+      if (payload.demo) {
+        setDemoUsage(payload.demo);
+      }
+
+      if (!res.ok || !payload.message) {
+        setDemoMessages((prev) =>
+          prev.filter((message) => message.id !== optimisticUser.id && message.id !== optimisticAssistant.id)
+        );
+
+        if (payload.error?.code === 'demo_limit_reached') {
+          setDemoLimitModalOpen(true);
+        }
+
+        throw new Error(payload.error?.message ?? 'Failed to send demo message');
+      }
+
+      setDemoMessages((prev) => {
+        const updated = [...prev];
+        const assistantIndex = updated.findIndex((message) => message.id === optimisticAssistant.id);
+        if (assistantIndex >= 0) {
+          updated[assistantIndex] = payload.message as MessageInfo;
+        }
+        return updated;
+      });
+
+      if (payload.demo?.exhausted) {
+        setDemoLimitModalOpen(true);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Failed to send demo message');
+    } finally {
+      setStreaming(false);
     }
   };
 
@@ -831,6 +980,16 @@ export default function AppPage() {
 
   const isResetView = authView === 'reset';
   const isLoginView = authView === 'login';
+  const showAuthScreen = !user && !isDemoMode;
+  const displayedMessages = isDemoMode ? demoMessages : activeThread?.messages ?? [];
+  const demoModelLabel = demoUsage.model || createDefaultDemoUsage().model;
+  const demoUsageLabel = `${demoUsage.used}/${demoUsage.limit} demo messages used`;
+  const demoRemainingLabel = `${demoUsage.remaining} demo ${demoUsage.remaining === 1 ? 'message' : 'messages'} left`;
+  const composerPlaceholder = isDemoMode
+    ? demoUsage.exhausted
+      ? 'Demo complete. Create an account to continue.'
+      : 'Try the demo with up to 3 messages...'
+    : 'Send a message...';
   const freeResetLabel = formatResetTime(freeUsage?.resetAt);
   const freeStatusMessage =
     freeUsage?.status === 'global_exhausted'
@@ -845,7 +1004,7 @@ export default function AppPage() {
     return <main className="container">Loading...</main>;
   }
 
-  if (!user) {
+  if (showAuthScreen) {
     return (
       <main className="auth-container">
         <div className="auth-wrapper">
@@ -976,13 +1135,27 @@ export default function AppPage() {
       {/* Header: Email left, Workspace center, Sign out right */}
       <header className="main-header">
         <div className="header-left">
-          <p className="header-session">
-            <span className="header-session-label">Signed in:</span>
-            <span className="header-session-email">{user.email}</span>
-          </p>
+          {user ? (
+            <p className="header-session">
+              <span className="header-session-label">Signed in:</span>
+              <span className="header-session-email">{user.email}</span>
+            </p>
+          ) : (
+            <div className="demo-guest-pill">
+              <span className="badge">Guest Demo</span>
+              <span className="tag">No login required</span>
+            </div>
+          )}
         </div>
         <div className="header-center">
-          {shouldShowFreeSource ? (
+          {isDemoMode ? (
+            <div className="free-source-banner">
+              <span className="badge glow">KeyLM Free</span>
+              <div>
+                <strong>{demoModelLabel}</strong>
+              </div>
+            </div>
+          ) : shouldShowFreeSource ? (
             <div className="free-source-banner">
               <span className="badge glow">KeyLM Free</span>
               <div>
@@ -1043,9 +1216,20 @@ export default function AppPage() {
             aria-pressed={isDark}
             title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
           />
-          <button className="button secondary" onClick={handleLogout}>
-            Sign out
-          </button>
+          {isDemoMode ? (
+            <>
+              <button className="button secondary" type="button" onClick={() => navigateToAuth('login')}>
+                Log in
+              </button>
+              <button className="button" type="button" onClick={() => navigateToAuth('register')}>
+                Create account
+              </button>
+            </>
+          ) : (
+            <button className="button secondary" onClick={handleLogout}>
+              Sign out
+            </button>
+          )}
         </div>
       </header>
 
@@ -1053,57 +1237,92 @@ export default function AppPage() {
       {freeThresholdNotice && <p className="tag notice-bar">{freeThresholdNotice}</p>}
 
       {/* Main content: Threads left, Chat center, Providers right */}
-      <div className="app-shell-new">
+      <div className={isDemoMode ? 'app-shell-new app-shell-demo' : 'app-shell-new'}>
         {/* Left sidebar - Threads */}
         <aside className="threads-sidebar">
-          <div className="card threads-panel">
-            <div className="chat-header">
-              <h3>Threads</h3>
-              <button className="button secondary" onClick={handleNewThread}>
-                New thread
-              </button>
+          {isDemoMode ? (
+            <div className="card demo-sidebar-card">
+              <div className="chat-header">
+                <h3>Try the demo</h3>
+                <span className={`status ${demoUsage.exhausted ? 'idle' : 'connected'}`}>
+                  {demoUsage.exhausted ? 'Complete' : 'Live'}
+                </span>
+              </div>
+              <p>
+                Explore the KeyLM dashboard without logging in. After 3 messages, we will ask you to log in or
+                create an account.
+              </p>
+              <div className="demo-usage-meter">
+                <strong>{demoUsage.remaining}</strong>
+                <span>{demoRemainingLabel}</span>
+              </div>
+              <p className="tag">{demoUsageLabel}</p>
             </div>
-            <div className="thread-list">
-              {threads.map((thread) => {
-                const fallbackTitle = thread.lastMessage ? truncateWords(thread.lastMessage, 4) || 'New thread' : 'New thread';
-                const threadTitle = thread.title && thread.title.trim() ? thread.title : fallbackTitle;
-                const messagePreview = thread.lastMessage
-                  ? truncateWords(thread.lastMessage, 8) || 'No messages yet'
-                  : 'No messages yet';
-                return (
-                  <div key={thread.id} className="thread-row">
-                    <button
-                      className={`thread-item ${activeThread?.id === thread.id ? 'active' : ''}`}
-                      onClick={() => handleSelectThread(thread.id)}
-                      type="button"
-                    >
-                      <div className="thread-title">
-                        <span className="thread-title-text">{threadTitle}</span>
-                        {thread.provider === 'groq' && <span className="thread-pill">KeyLM Free</span>}
-                      </div>
-                      <div className="thread-preview">{messagePreview}</div>
-                    </button>
-                    <button
-                      className="thread-menu"
-                      onClick={() => handleDeleteThread(thread)}
-                      type="button"
-                      aria-label="Delete thread"
-                      title="Delete thread"
-                    >
-                      ...
-                    </button>
-                  </div>
-                );
-              })}
+          ) : (
+            <div className="card threads-panel">
+              <div className="chat-header">
+                <h3>Threads</h3>
+                <button className="button secondary" onClick={handleNewThread}>
+                  New thread
+                </button>
+              </div>
+              <div className="thread-list">
+                {threads.map((thread) => {
+                  const fallbackTitle = thread.lastMessage ? truncateWords(thread.lastMessage, 4) || 'New thread' : 'New thread';
+                  const threadTitle = thread.title && thread.title.trim() ? thread.title : fallbackTitle;
+                  const messagePreview = thread.lastMessage
+                    ? truncateWords(thread.lastMessage, 8) || 'No messages yet'
+                    : 'No messages yet';
+                  return (
+                    <div key={thread.id} className="thread-row">
+                      <button
+                        className={`thread-item ${activeThread?.id === thread.id ? 'active' : ''}`}
+                        onClick={() => handleSelectThread(thread.id)}
+                        type="button"
+                      >
+                        <div className="thread-title">
+                          <span className="thread-title-text">{threadTitle}</span>
+                          {thread.provider === 'groq' && <span className="thread-pill">KeyLM Free</span>}
+                        </div>
+                        <div className="thread-preview">{messagePreview}</div>
+                      </button>
+                      <button
+                        className="thread-menu"
+                        onClick={() => handleDeleteThread(thread)}
+                        type="button"
+                        aria-label="Delete thread"
+                        title="Delete thread"
+                      >
+                        ...
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
         </aside>
 
         {/* Center - Chat area */}
         <section className="chat-section">
           <div className="card chat-box">
             <div className="chat-messages">
-              {activeThread?.messages?.map((msg) => (
+              {displayedMessages.length === 0 && (
+                <div className="chat-empty-state">
+                  <span className="badge glow">{isDemoMode ? 'Try Demo' : 'New conversation'}</span>
+                  <h3>
+                    {isDemoMode
+                      ? 'Ask up to 3 questions without logging in.'
+                      : 'Start a new thread to begin chatting.'}
+                  </h3>
+                  <p>
+                    {isDemoMode
+                      ? 'Once the demo limit is finished, KeyLM will prompt you to log in or create an account.'
+                      : 'Pick a model, start a thread, and stream responses in your workspace.'}
+                  </p>
+                </div>
+              )}
+              {displayedMessages.map((msg) => (
                 <div key={msg.id} className={`chat-bubble ${msg.role}`}>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {msg.content}
@@ -1120,25 +1339,46 @@ export default function AppPage() {
             </div>
             <div className="chat-input">
               <textarea
-                placeholder="Send a message..."
+                placeholder={composerPlaceholder}
                 value={messageInput}
+                disabled={isDemoMode && demoUsage.exhausted}
                 onChange={(event) => setMessageInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();
-                    handleSendMessage();
+                    if (isDemoMode) {
+                      void handleSendDemoMessage();
+                    } else {
+                      void handleSendMessage();
+                    }
                   }
                 }}
               />
               <div className="send-actions">
-                {streaming ? (
-                  <button className="button secondary" onClick={handleStop}>
-                    Stop
-                  </button>
+                {isDemoMode ? (
+                  <>
+                    <button
+                      className="button"
+                      type="button"
+                      disabled={streaming || demoUsage.exhausted}
+                      onClick={() => void handleSendDemoMessage()}
+                    >
+                      {streaming ? 'Sending...' : demoUsage.exhausted ? 'Demo complete' : 'Send'}
+                    </button>
+                    <span className="tag">{demoRemainingLabel}</span>
+                  </>
                 ) : (
-                  <button className="button" onClick={handleSendMessage}>
-                    Send
-                  </button>
+                  <>
+                    {streaming ? (
+                      <button className="button secondary" onClick={handleStop}>
+                        Stop
+                      </button>
+                    ) : (
+                      <button className="button" onClick={handleSendMessage}>
+                        Send
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -1146,84 +1386,86 @@ export default function AppPage() {
         </section>
 
         {/* Right sidebar - Providers */}
-        <aside className="providers-sidebar">
-          <div className="card free-usage-card">
-            <div className="free-usage-header">
-              <div>
-                <h3>Free quota</h3>
-                <p>Shared KeyLM fallback</p>
-              </div>
-              <span className={`status ${freeUsage?.status === 'available' ? 'connected' : 'idle'}`}>
-                {freeUsage?.status === 'available' ? 'Available' : 'BYOK needed'}
-              </span>
-            </div>
-            <div className="free-usage-grid">
-              <div className="free-usage-stat">
-                <strong>{freeUsage?.user.remaining ?? 0}</strong>
-                <span>User requests left</span>
-              </div>
-              <div className="free-usage-stat">
-                <strong>{freeUsage?.global.remaining ?? 0}</strong>
-                <span>Global requests left</span>
-              </div>
-            </div>
-            <p className="tag">
-              Resets {freeResetLabel || 'soon'}
-            </p>
-            {freeStatusMessage && <p className="free-usage-warning">{freeStatusMessage}</p>}
-          </div>
-          <div className="card">
-            <h3>Providers</h3>
-            <p>Connect your API keys</p>
-          </div>
-          {KEY_PROVIDERS.map((provider) => {
-            const keys = providers[provider.id];
-            const connected = keys.some((key) => key.status === 'active');
-            return (
-              <div key={provider.id} className="card provider-card">
-                <div className="provider-header">
-                  <div>
-                    <h4>{provider.name}</h4>
-                    <p>{provider.detail}</p>
-                  </div>
-                  <span className={`status ${connected ? 'connected' : 'idle'}`}>
-                    {connected ? 'Connected' : 'Idle'}
-                  </span>
+        {!isDemoMode && (
+          <aside className="providers-sidebar">
+            <div className="card free-usage-card">
+              <div className="free-usage-header">
+                <div>
+                  <h3>Free quota</h3>
+                  <p>Shared KeyLM fallback</p>
                 </div>
-                <div className="provider-input">
-                  <input
-                    className="input"
-                    type="password"
-                    placeholder="Paste API key"
-                    value={keyInputs[provider.id]}
-                    onChange={(event) =>
-                      setKeyInputs((prev) => ({ ...prev, [provider.id]: event.target.value }))
-                    }
-                  />
-                  <button className="button" onClick={() => handleConnectKey(provider.id)}>
-                    Connect
-                  </button>
-                </div>
-                {keys.length > 0 && (
-                  <div className="connected-keys">
-                    {keys.map((key) => (
-                      <div key={key.id} className="key-item">
-                        <span className="tag">{key.keyMask}</span>
-                        <small>{key.status}</small>
-                        <button
-                          className="button secondary small"
-                          onClick={() => handleDeleteKey(provider.id, key.id)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <span className={`status ${freeUsage?.status === 'available' ? 'connected' : 'idle'}`}>
+                  {freeUsage?.status === 'available' ? 'Available' : 'BYOK needed'}
+                </span>
               </div>
-            );
-          })}
-        </aside>
+              <div className="free-usage-grid">
+                <div className="free-usage-stat">
+                  <strong>{freeUsage?.user.remaining ?? 0}</strong>
+                  <span>User requests left</span>
+                </div>
+                <div className="free-usage-stat">
+                  <strong>{freeUsage?.global.remaining ?? 0}</strong>
+                  <span>Global requests left</span>
+                </div>
+              </div>
+              <p className="tag">
+                Resets {freeResetLabel || 'soon'}
+              </p>
+              {freeStatusMessage && <p className="free-usage-warning">{freeStatusMessage}</p>}
+            </div>
+            <div className="card">
+              <h3>Providers</h3>
+              <p>Connect your API keys</p>
+            </div>
+            {KEY_PROVIDERS.map((provider) => {
+              const keys = providers[provider.id];
+              const connected = keys.some((key) => key.status === 'active');
+              return (
+                <div key={provider.id} className="card provider-card">
+                  <div className="provider-header">
+                    <div>
+                      <h4>{provider.name}</h4>
+                      <p>{provider.detail}</p>
+                    </div>
+                    <span className={`status ${connected ? 'connected' : 'idle'}`}>
+                      {connected ? 'Connected' : 'Idle'}
+                    </span>
+                  </div>
+                  <div className="provider-input">
+                    <input
+                      className="input"
+                      type="password"
+                      placeholder="Paste API key"
+                      value={keyInputs[provider.id]}
+                      onChange={(event) =>
+                        setKeyInputs((prev) => ({ ...prev, [provider.id]: event.target.value }))
+                      }
+                    />
+                    <button className="button" onClick={() => handleConnectKey(provider.id)}>
+                      Connect
+                    </button>
+                  </div>
+                  {keys.length > 0 && (
+                    <div className="connected-keys">
+                      {keys.map((key) => (
+                        <div key={key.id} className="key-item">
+                          <span className="tag">{key.keyMask}</span>
+                          <small>{key.status}</small>
+                          <button
+                            className="button secondary small"
+                            onClick={() => handleDeleteKey(provider.id, key.id)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </aside>
+        )}
       </div>
 
       {deleteTarget && (
@@ -1242,6 +1484,35 @@ export default function AppPage() {
           </div>
         </div>
       )}
+
+      {isDemoMode && demoLimitModalOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="card modal demo-limit-modal">
+            <span className="badge glow">Demo complete</span>
+            <h3>You have used all 3 demo messages.</h3>
+            <p>Create an account to keep chatting in KeyLM, or log in if you already have one.</p>
+            <div className="modal-actions demo-limit-actions">
+              <button className="button secondary" type="button" onClick={() => setDemoLimitModalOpen(false)}>
+                Not now
+              </button>
+              <button className="button secondary" type="button" onClick={() => navigateToAuth('login')}>
+                Log in
+              </button>
+              <button className="button" type="button" onClick={() => navigateToAuth('register')}>
+                Create account
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
+  );
+}
+
+export default function AppPage() {
+  return (
+    <Suspense fallback={<main className="container">Loading...</main>}>
+      <AppPageClient />
+    </Suspense>
   );
 }

@@ -455,6 +455,13 @@ button {
   gap: 12px;
 }
 
+.demo-guest-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .theme-toggle {
   --sun-core: #111111;
   --sun-glow: rgba(0, 0, 0, 0.35);
@@ -554,6 +561,10 @@ button {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.app-shell-demo {
+  grid-template-columns: 300px 1fr;
 }
 
 .threads-sidebar {
@@ -674,6 +685,36 @@ button {
   gap: 12px;
   height: 100%;
   overflow-y: auto;
+}
+
+.demo-sidebar-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.demo-sidebar-card p {
+  color: var(--muted);
+}
+
+.demo-usage-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(229, 111, 46, 0.12), rgba(47, 127, 119, 0.08));
+}
+
+.demo-usage-meter strong {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.demo-usage-meter span {
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .free-usage-card {
@@ -1282,6 +1323,28 @@ button {
   align-self: flex-start;
 }
 
+.chat-empty-state {
+  margin: auto;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+  padding: 28px;
+  color: var(--muted);
+}
+
+.chat-empty-state h3 {
+  font-size: 1.35rem;
+  color: var(--ink);
+}
+
+.chat-empty-state p {
+  max-width: 46ch;
+}
+
 .chat-input {
   display: flex;
   gap: 12px;
@@ -1590,6 +1653,15 @@ ol.docs-list li {
   color: #902b22;
 }
 
+.demo-limit-modal {
+  width: min(520px, 94vw);
+  gap: 14px;
+}
+
+.demo-limit-actions {
+  flex-wrap: wrap;
+}
+
 .docs-endpoint-path {
   font-weight: 600;
 }
@@ -1604,6 +1676,10 @@ ol.docs-list li {
   .app-shell-new {
     grid-template-columns: 260px 1fr 320px;
     gap: 16px;
+  }
+
+  .app-shell-demo {
+    grid-template-columns: 260px 1fr;
   }
 }
 

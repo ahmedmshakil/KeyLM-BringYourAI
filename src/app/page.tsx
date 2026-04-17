@@ -26,6 +26,9 @@ export default function Home() {
             <Link className="button" href="/app">
               Open the App
             </Link>
+            <Link className="button secondary" href="/app?demo=1">
+              Try Demo
+            </Link>
             <Link className="button secondary" href="/docs">
               Read the Docs
             </Link>
