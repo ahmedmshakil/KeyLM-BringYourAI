@@ -23,6 +23,7 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  output: 'standalone',
   reactStrictMode: true,
   typedRoutes: false,
   async headers() {
