@@ -286,6 +286,13 @@ button {
   color: #fff;
 }
 
+.button:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 .button:hover {
   transform: translateY(-2px);
   box-shadow: 0 12px 28px rgba(229, 111, 46, 0.35);
@@ -610,6 +617,43 @@ button {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.chat-box-header {
+  flex-shrink: 0;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-thread-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chat-thread-heading h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-thread-heading p {
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .chat-box .chat-messages {

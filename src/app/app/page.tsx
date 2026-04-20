@@ -70,6 +70,8 @@ type ThreadDetail = {
   messages: MessageInfo[];
 };
 
+type ExportFormat = 'markdown' | 'json' | 'pdf';
+
 type FreeUsageInfo = {
   provider: 'groq';
   model: string;
@@ -137,6 +139,13 @@ const createDefaultDemoUsage = (): DemoUsageInfo => ({
 
 const FREE_NOTICE_THRESHOLDS = [5, 10];
 
+const PROVIDER_LABELS: Record<RuntimeProviderId, string> = {
+  openai: 'OpenAI',
+  gemini: 'Gemini',
+  anthropic: 'Anthropic',
+  groq: 'KeyLM Free'
+};
+
 const truncateWords = (value: string, limit: number) => {
   const cleaned = value.replace(/\s+/g, ' ').trim();
   if (!cleaned) {
@@ -145,6 +154,34 @@ const truncateWords = (value: string, limit: number) => {
   const words = cleaned.split(' ');
   const snippet = words.slice(0, limit).join(' ');
   return words.length > limit ? `${snippet}...` : snippet;
+};
+
+const getThreadFallbackTitle = (messages: MessageInfo[]) => {
+  const firstUserMessage = messages.find((message) => message.role === 'user' && message.content.trim());
+  if (!firstUserMessage) {
+    return 'New thread';
+  }
+
+  return truncateWords(firstUserMessage.content, 4) || 'New thread';
+};
+
+const getFilenameFromDisposition = (value: string | null) => {
+  if (!value) {
+    return null;
+  }
+
+  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+
+  const quotedMatch = value.match(/filename="([^"]+)"/i);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1];
+  }
+
+  const plainMatch = value.match(/filename=([^;]+)/i);
+  return plainMatch?.[1]?.trim() ?? null;
 };
 
 const formatResetTime = (value?: string) => {
@@ -217,6 +254,7 @@ function AppPageClient() {
   const [demoUsage, setDemoUsage] = useState<DemoUsageInfo>(createDefaultDemoUsage());
   const [demoMessages, setDemoMessages] = useState<MessageInfo[]>([]);
   const [demoLimitModalOpen, setDemoLimitModalOpen] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const freeNoticeTimeoutRef = useRef<number | null>(null);
   const previousFreeUsedRef = useRef<number | null>(null);
@@ -229,10 +267,24 @@ function AppPageClient() {
       .map((provider) => provider.id);
   }, [providers]);
 
+  const activeThreadSummary = useMemo(() => {
+    if (!activeThread) {
+      return null;
+    }
+
+    return threads.find((thread) => thread.id === activeThread.id) ?? null;
+  }, [activeThread, threads]);
+
   const activeThreadIsFree = activeThread?.provider === 'groq';
   const freeModeAvailable = freeUsage?.status === 'available';
   const shouldShowFreeSource = activeThreadIsFree || (connectedProviders.length === 0 && freeModeAvailable);
   const isDemoMode = demoModeRequested && !user;
+  const activeThreadTitle = activeThread
+    ? activeThreadSummary?.title?.trim() || getThreadFallbackTitle(activeThread.messages)
+    : '';
+  const activeThreadSubtitle = activeThread
+    ? `${PROVIDER_LABELS[activeThread.provider]} · ${activeThread.model}`
+    : '';
 
   const flushBufferedAssistantDelta = () => {
     if (streamFlushTimeoutRef.current !== null) {
@@ -978,6 +1030,59 @@ function AppPageClient() {
     }
   };
 
+  const handleDownloadExport = async (format: Extract<ExportFormat, 'markdown' | 'json'>) => {
+    if (!activeThread) {
+      setNotice('Select a thread to export.');
+      return;
+    }
+
+    setNotice('');
+    setExportingFormat(format);
+
+    try {
+      const res = await fetch(`/api/threads/${activeThread.id}/export?format=${format}`);
+      if (!res.ok) {
+        let message = 'Failed to export thread';
+        try {
+          const payload = (await res.json()) as { error?: { message?: string } };
+          message = payload?.error?.message ?? message;
+        } catch {
+          // ignore malformed error body
+        }
+        throw new Error(message);
+      }
+
+      const blob = await res.blob();
+      const fallbackName = `thread-export.${format === 'markdown' ? 'md' : 'json'}`;
+      const filename = getFilenameFromDisposition(res.headers.get('content-disposition')) ?? fallbackName;
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Failed to export thread');
+    } finally {
+      setExportingFormat(null);
+    }
+  };
+
+  const handlePdfExport = () => {
+    if (!activeThread) {
+      setNotice('Select a thread to export.');
+      return;
+    }
+
+    setNotice('');
+    const exportWindow = window.open(`/api/threads/${activeThread.id}/export?format=pdf`, '_blank', 'noopener');
+    if (!exportWindow) {
+      setNotice('Allow popups in your browser to export this thread as PDF.');
+    }
+  };
+
   const isResetView = authView === 'reset';
   const isLoginView = authView === 'login';
   const showAuthScreen = !user && !isDemoMode;
@@ -1306,6 +1411,40 @@ function AppPageClient() {
         {/* Center - Chat area */}
         <section className="chat-section">
           <div className="card chat-box">
+            {!isDemoMode && activeThread && (
+              <div className="chat-header chat-box-header">
+                <div className="chat-thread-heading">
+                  <h3>{activeThreadTitle}</h3>
+                  <p>{activeThreadSubtitle}</p>
+                </div>
+                <div className="chat-export-actions">
+                  <button
+                    className="button secondary small"
+                    type="button"
+                    disabled={streaming || exportingFormat !== null}
+                    onClick={() => void handleDownloadExport('markdown')}
+                  >
+                    {exportingFormat === 'markdown' ? 'Exporting…' : 'Markdown'}
+                  </button>
+                  <button
+                    className="button secondary small"
+                    type="button"
+                    disabled={streaming || exportingFormat !== null}
+                    onClick={() => void handleDownloadExport('json')}
+                  >
+                    {exportingFormat === 'json' ? 'Exporting…' : 'JSON'}
+                  </button>
+                  <button
+                    className="button secondary small"
+                    type="button"
+                    disabled={streaming}
+                    onClick={handlePdfExport}
+                  >
+                    PDF
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="chat-messages">
               {displayedMessages.length === 0 && (
                 <div className="chat-empty-state">
