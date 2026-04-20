@@ -4,15 +4,14 @@ import {
   buildExportFilename,
   buildThreadExportData,
   renderThreadJson,
-  renderThreadMarkdown,
   renderThreadPrintHtml
 } from '@/lib/services/threadExport';
 import { getThread } from '@/lib/services/threadService';
 
-type ExportFormat = 'markdown' | 'json' | 'pdf';
+type ExportFormat = 'json' | 'pdf';
 
 function getExportFormat(value: string | null): ExportFormat | null {
-  if (value === 'markdown' || value === 'json' || value === 'pdf') {
+  if (value === 'json' || value === 'pdf') {
     return value;
   }
 
@@ -31,7 +30,7 @@ export async function GET(
   const format = getExportFormat(new URL(request.url).searchParams.get('format'));
   if (!format) {
     return errorResponse(
-      { code: 'invalid_request', message: 'Invalid export format. Use markdown, json, or pdf.' },
+      { code: 'invalid_request', message: 'Invalid export format. Use json or pdf.' },
       400
     );
   }
@@ -43,16 +42,6 @@ export async function GET(
   }
 
   const exportData = buildThreadExportData(thread);
-
-  if (format === 'markdown') {
-    return new Response(renderThreadMarkdown(exportData), {
-      headers: {
-        'Content-Type': 'text/markdown; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${buildExportFilename(exportData, format)}"`,
-        'Cache-Control': 'no-store'
-      }
-    });
-  }
 
   if (format === 'json') {
     return new Response(renderThreadJson(exportData), {

@@ -70,7 +70,7 @@ type ThreadDetail = {
   messages: MessageInfo[];
 };
 
-type ExportFormat = 'markdown' | 'json' | 'pdf';
+type ExportFormat = 'json' | 'pdf';
 
 type FreeUsageInfo = {
   provider: 'groq';
@@ -256,6 +256,7 @@ function AppPageClient() {
   const [demoLimitModalOpen, setDemoLimitModalOpen] = useState(false);
   const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const printFrameRef = useRef<HTMLIFrameElement | null>(null);
   const freeNoticeTimeoutRef = useRef<number | null>(null);
   const previousFreeUsedRef = useRef<number | null>(null);
   const streamFlushTimeoutRef = useRef<number | null>(null);
@@ -285,6 +286,80 @@ function AppPageClient() {
   const activeThreadSubtitle = activeThread
     ? `${PROVIDER_LABELS[activeThread.provider]} · ${activeThread.model}`
     : '';
+
+  const cleanupPrintFrame = () => {
+    if (printFrameRef.current) {
+      printFrameRef.current.remove();
+      printFrameRef.current = null;
+    }
+  };
+
+  const printHtmlFromFrame = (html: string) => {
+    cleanupPrintFrame();
+
+    return new Promise<void>((resolve, reject) => {
+      const iframe = document.createElement('iframe');
+      iframe.setAttribute('aria-hidden', 'true');
+      iframe.tabIndex = -1;
+      iframe.style.position = 'fixed';
+      iframe.style.width = '1px';
+      iframe.style.height = '1px';
+      iframe.style.opacity = '0';
+      iframe.style.pointerEvents = 'none';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.border = '0';
+
+      const finish = () => {
+        cleanupPrintFrame();
+        resolve();
+      };
+
+      iframe.onload = () => {
+        const printWindow = iframe.contentWindow;
+        const printDocument = printWindow?.document;
+
+        if (!printWindow || !printDocument) {
+          cleanupPrintFrame();
+          reject(new Error('Failed to prepare the PDF export.'));
+          return;
+        }
+
+        printDocument.open();
+        printDocument.write(html);
+        printDocument.close();
+
+        const afterPrintHandler = () => {
+          printWindow.removeEventListener('afterprint', afterPrintHandler);
+          window.clearTimeout(fallbackTimeout);
+          finish();
+        };
+
+        const fallbackTimeout = window.setTimeout(() => {
+          printWindow.removeEventListener('afterprint', afterPrintHandler);
+          finish();
+        }, 60000);
+
+        printWindow.addEventListener('afterprint', afterPrintHandler, { once: true });
+
+        window.setTimeout(() => {
+          try {
+            printWindow.focus();
+            printWindow.print();
+          } catch {
+            window.clearTimeout(fallbackTimeout);
+            printWindow.removeEventListener('afterprint', afterPrintHandler);
+            cleanupPrintFrame();
+            reject(new Error('Failed to open the print dialog.'));
+          }
+        }, 120);
+      };
+
+      printFrameRef.current = iframe;
+      document.body.appendChild(iframe);
+      iframe.src = 'about:blank';
+    });
+  };
 
   const flushBufferedAssistantDelta = () => {
     if (streamFlushTimeoutRef.current !== null) {
@@ -533,6 +608,8 @@ function AppPageClient() {
       if (streamFlushTimeoutRef.current !== null) {
         window.clearTimeout(streamFlushTimeoutRef.current);
       }
+
+      cleanupPrintFrame();
     };
   }, []);
 
@@ -1030,17 +1107,17 @@ function AppPageClient() {
     }
   };
 
-  const handleDownloadExport = async (format: Extract<ExportFormat, 'markdown' | 'json'>) => {
+  const handleJsonExport = async () => {
     if (!activeThread) {
       setNotice('Select a thread to export.');
       return;
     }
 
     setNotice('');
-    setExportingFormat(format);
+    setExportingFormat('json');
 
     try {
-      const res = await fetch(`/api/threads/${activeThread.id}/export?format=${format}`);
+      const res = await fetch(`/api/threads/${activeThread.id}/export?format=json`);
       if (!res.ok) {
         let message = 'Failed to export thread';
         try {
@@ -1053,7 +1130,7 @@ function AppPageClient() {
       }
 
       const blob = await res.blob();
-      const fallbackName = `thread-export.${format === 'markdown' ? 'md' : 'json'}`;
+      const fallbackName = 'thread-export.json';
       const filename = getFilenameFromDisposition(res.headers.get('content-disposition')) ?? fallbackName;
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -1070,16 +1147,34 @@ function AppPageClient() {
     }
   };
 
-  const handlePdfExport = () => {
+  const handlePdfExport = async () => {
     if (!activeThread) {
       setNotice('Select a thread to export.');
       return;
     }
 
     setNotice('');
-    const exportWindow = window.open(`/api/threads/${activeThread.id}/export?format=pdf`, '_blank', 'noopener');
-    if (!exportWindow) {
-      setNotice('Allow popups in your browser to export this thread as PDF.');
+    setExportingFormat('pdf');
+
+    try {
+      const res = await fetch(`/api/threads/${activeThread.id}/export?format=pdf`);
+      if (!res.ok) {
+        let message = 'Failed to export thread';
+        try {
+          const payload = (await res.json()) as { error?: { message?: string } };
+          message = payload?.error?.message ?? message;
+        } catch {
+          // ignore malformed error body
+        }
+        throw new Error(message);
+      }
+
+      const html = await res.text();
+      await printHtmlFromFrame(html);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Failed to export thread');
+    } finally {
+      setExportingFormat(null);
     }
   };
 
@@ -1422,25 +1517,17 @@ function AppPageClient() {
                     className="button secondary small"
                     type="button"
                     disabled={streaming || exportingFormat !== null}
-                    onClick={() => void handleDownloadExport('markdown')}
-                  >
-                    {exportingFormat === 'markdown' ? 'Exporting…' : 'Markdown'}
-                  </button>
-                  <button
-                    className="button secondary small"
-                    type="button"
-                    disabled={streaming || exportingFormat !== null}
-                    onClick={() => void handleDownloadExport('json')}
+                    onClick={() => void handleJsonExport()}
                   >
                     {exportingFormat === 'json' ? 'Exporting…' : 'JSON'}
                   </button>
                   <button
                     className="button secondary small"
                     type="button"
-                    disabled={streaming}
-                    onClick={handlePdfExport}
+                    disabled={streaming || exportingFormat !== null}
+                    onClick={() => void handlePdfExport()}
                   >
-                    PDF
+                    {exportingFormat === 'pdf' ? 'Preparing…' : 'PDF'}
                   </button>
                 </div>
               </div>
