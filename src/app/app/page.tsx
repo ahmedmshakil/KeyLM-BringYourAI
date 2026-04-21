@@ -70,7 +70,48 @@ type ThreadDetail = {
   messages: MessageInfo[];
 };
 
+type TokenTotals = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  requestCount: number;
+};
+
+type UsageCoverage = {
+  messagesWithUsage: number;
+  messagesWithoutUsage: number;
+};
+
+type ProviderUsageSummary = TokenTotals & {
+  provider: RuntimeProviderId;
+  percentageOfTotal: number;
+};
+
+type ModelUsageSummary = TokenTotals & {
+  provider: RuntimeProviderId;
+  model: string;
+};
+
+type UsageSeriesPoint = TokenTotals & {
+  label: string;
+  bucketStart: string;
+  bucketEnd: string;
+};
+
+type UsageDashboard = {
+  generatedAt: string;
+  defaultGrain: 'day';
+  totals30d: TokenTotals;
+  totals7d: TokenTotals;
+  coverage30d: UsageCoverage;
+  providers30d: ProviderUsageSummary[];
+  models30d: ModelUsageSummary[];
+  daily14d: UsageSeriesPoint[];
+  weekly8w: UsageSeriesPoint[];
+};
+
 type ExportFormat = 'json' | 'pdf';
+type UsageGrain = 'day' | 'week';
 
 type FreeUsageInfo = {
   provider: 'groq';
@@ -138,6 +179,11 @@ const createDefaultDemoUsage = (): DemoUsageInfo => ({
 });
 
 const FREE_NOTICE_THRESHOLDS = [5, 10];
+const numberFormatter = new Intl.NumberFormat();
+const compactNumberFormatter = new Intl.NumberFormat(undefined, {
+  notation: 'compact',
+  maximumFractionDigits: 1
+});
 
 const PROVIDER_LABELS: Record<RuntimeProviderId, string> = {
   openai: 'OpenAI',
@@ -216,6 +262,22 @@ const formatUsageParts = (usage?: UsageInfo) => {
   return parts;
 };
 
+const formatTokenCount = (value: number) => numberFormatter.format(value);
+const formatCompactTokenCount = (value: number) => compactNumberFormatter.format(value);
+
+const formatTrackedCoverage = (coverage: UsageCoverage) => {
+  const total = coverage.messagesWithUsage + coverage.messagesWithoutUsage;
+  if (total === 0) {
+    return 'No assistant replies in the last 30 days yet.';
+  }
+
+  if (coverage.messagesWithoutUsage === 0) {
+    return `Tracking all ${coverage.messagesWithUsage} assistant replies from the last 30 days.`;
+  }
+
+  return `Tracking ${coverage.messagesWithUsage} of ${total} assistant replies from the last 30 days.`;
+};
+
 function AppPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -255,6 +317,10 @@ function AppPageClient() {
   const [demoMessages, setDemoMessages] = useState<MessageInfo[]>([]);
   const [demoLimitModalOpen, setDemoLimitModalOpen] = useState(false);
   const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null);
+  const [usageDashboard, setUsageDashboard] = useState<UsageDashboard | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageLoadError, setUsageLoadError] = useState('');
+  const [usageGrain, setUsageGrain] = useState<UsageGrain>('day');
   const abortRef = useRef<AbortController | null>(null);
   const printFrameRef = useRef<HTMLIFrameElement | null>(null);
   const freeNoticeTimeoutRef = useRef<number | null>(null);
@@ -286,6 +352,15 @@ function AppPageClient() {
   const activeThreadSubtitle = activeThread
     ? `${PROVIDER_LABELS[activeThread.provider]} · ${activeThread.model}`
     : '';
+  const usageChartPoints = usageDashboard
+    ? usageGrain === 'week'
+      ? usageDashboard.weekly8w
+      : usageDashboard.daily14d
+    : [];
+  const usageChartMax = Math.max(1, ...usageChartPoints.map((point) => point.totalTokens));
+  const usageHasTrackedReplies = (usageDashboard?.coverage30d.messagesWithUsage ?? 0) > 0;
+  const usageHasRecentReplies =
+    ((usageDashboard?.coverage30d.messagesWithUsage ?? 0) + (usageDashboard?.coverage30d.messagesWithoutUsage ?? 0)) > 0;
 
   const cleanupPrintFrame = () => {
     if (printFrameRef.current) {
@@ -521,9 +596,49 @@ function AppPageClient() {
     }
   };
 
+  const loadUsageDashboard = async (showLoading = false): Promise<UsageDashboard | null> => {
+    if (!user) {
+      setUsageDashboard(null);
+      setUsageLoadError('');
+      return null;
+    }
+
+    if (showLoading) {
+      setUsageLoading(true);
+    }
+
+    try {
+      const payload = await apiJson<UsageDashboard>('/api/usage/dashboard');
+      setUsageDashboard(payload);
+      setUsageLoadError('');
+      setUsageGrain(payload.defaultGrain);
+      return payload;
+    } catch {
+      setUsageDashboard(null);
+      setUsageLoadError('Usage dashboard is unavailable right now.');
+      return null;
+    } finally {
+      if (showLoading) {
+        setUsageLoading(false);
+      }
+    }
+  };
+
   useEffect(() => {
     void loadBootstrap(true);
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setUsageDashboard(null);
+      setUsageLoadError('');
+      setUsageLoading(false);
+      setUsageGrain('day');
+      return;
+    }
+
+    void loadUsageDashboard(true);
+  }, [user?.id]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem('theme');
@@ -728,6 +843,9 @@ function AppPageClient() {
     setModels(createEmptyModels());
     setModelsMeta(createEmptyModelsMeta());
     setFreeUsage(null);
+    setUsageDashboard(null);
+    setUsageLoadError('');
+    setUsageGrain('day');
     setNotice('');
     setFreeThresholdNotice('');
     setAuthView('login');
@@ -862,6 +980,7 @@ function AppPageClient() {
         setStreaming(false);
         setActiveThread(null);
       }
+      void loadUsageDashboard();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Failed to delete thread');
     } finally {
@@ -1045,6 +1164,7 @@ function AppPageClient() {
               lastMessage: payload.message.content,
               updatedAt: payload.message.createdAt
             });
+            void loadUsageDashboard();
             setStreaming(false);
           }
 
@@ -1085,6 +1205,7 @@ function AppPageClient() {
           lastMessage: payload.message.content,
           updatedAt: payload.message.createdAt
         });
+        void loadUsageDashboard();
         setStreaming(false);
       }
     } catch (error) {
@@ -1638,6 +1759,141 @@ function AppPageClient() {
                 Resets {freeResetLabel || 'soon'}
               </p>
               {freeStatusMessage && <p className="free-usage-warning">{freeStatusMessage}</p>}
+            </div>
+            <div className="card usage-dashboard-card">
+              <div className="usage-dashboard-header">
+                <div>
+                  <h3>Token usage</h3>
+                  <p>Tracked assistant token usage across your chats</p>
+                </div>
+                <div className="usage-grain-toggle" role="tablist" aria-label="Usage chart range">
+                  <button
+                    className={`usage-grain-button ${usageGrain === 'day' ? 'active' : ''}`}
+                    type="button"
+                    onClick={() => setUsageGrain('day')}
+                    aria-pressed={usageGrain === 'day'}
+                  >
+                    Daily
+                  </button>
+                  <button
+                    className={`usage-grain-button ${usageGrain === 'week' ? 'active' : ''}`}
+                    type="button"
+                    onClick={() => setUsageGrain('week')}
+                    aria-pressed={usageGrain === 'week'}
+                  >
+                    Weekly
+                  </button>
+                </div>
+              </div>
+
+              {usageLoading && !usageDashboard ? (
+                <p className="usage-empty-state">Loading your token dashboard...</p>
+              ) : usageLoadError ? (
+                <p className="usage-empty-state">{usageLoadError}</p>
+              ) : usageDashboard ? (
+                <>
+                  <div className="usage-summary-grid">
+                    <div className="usage-summary-stat">
+                      <span>Last 7 days</span>
+                      <strong>{formatCompactTokenCount(usageDashboard.totals7d.totalTokens)}</strong>
+                      <small>
+                        {formatTokenCount(usageDashboard.totals7d.promptTokens)} in ·{' '}
+                        {formatTokenCount(usageDashboard.totals7d.completionTokens)} out
+                      </small>
+                    </div>
+                    <div className="usage-summary-stat">
+                      <span>Last 30 days</span>
+                      <strong>{formatCompactTokenCount(usageDashboard.totals30d.totalTokens)}</strong>
+                      <small>{formatTokenCount(usageDashboard.totals30d.requestCount)} tracked replies</small>
+                    </div>
+                  </div>
+
+                  <p className="usage-coverage-note">{formatTrackedCoverage(usageDashboard.coverage30d)}</p>
+
+                  {usageHasTrackedReplies ? (
+                    <>
+                      <div className="usage-chart-panel">
+                        <div className="usage-chart-header">
+                          <strong>{usageGrain === 'day' ? 'Daily trend' : 'Weekly trend'}</strong>
+                          <span>{usageGrain === 'day' ? 'Last 14 days' : 'Last 8 weeks'}</span>
+                        </div>
+                        <div className="usage-chart" role="img" aria-label="Token usage trend chart">
+                          {usageChartPoints.map((point, index) => {
+                            const height = point.totalTokens > 0 ? Math.max(8, (point.totalTokens / usageChartMax) * 100) : 4;
+                            const showLabel = usageGrain === 'week' || index % 2 === 0 || index === usageChartPoints.length - 1;
+
+                            return (
+                              <div
+                                key={`${point.bucketStart}-${usageGrain}`}
+                                className="usage-chart-point"
+                                title={`${point.label}: ${formatTokenCount(point.totalTokens)} total tokens`}
+                              >
+                                <div className="usage-chart-track">
+                                  <div className="usage-chart-bar" style={{ height: `${height}%` }} />
+                                </div>
+                                <span className="usage-chart-label">{showLabel ? point.label : ''}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="usage-provider-list">
+                        <div className="usage-section-header">
+                          <strong>Providers</strong>
+                          <span>Last 30 days</span>
+                        </div>
+                        {usageDashboard.providers30d.map((provider) => (
+                          <div key={provider.provider} className="usage-provider-row">
+                            <div className="usage-provider-row-top">
+                              <strong>{PROVIDER_LABELS[provider.provider]}</strong>
+                              <span>{formatCompactTokenCount(provider.totalTokens)}</span>
+                            </div>
+                            <div className="usage-provider-row-meta">
+                              {formatTokenCount(provider.promptTokens)} in · {formatTokenCount(provider.completionTokens)} out ·{' '}
+                              {Math.round(provider.percentageOfTotal)}%
+                            </div>
+                            <div className="usage-provider-bar">
+                              <span style={{ width: `${Math.max(provider.percentageOfTotal, provider.totalTokens > 0 ? 6 : 0)}%` }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="usage-model-list">
+                        <div className="usage-section-header">
+                          <strong>Top models</strong>
+                          <span>Last 30 days</span>
+                        </div>
+                        {usageDashboard.models30d.length > 0 ? (
+                          usageDashboard.models30d.slice(0, 5).map((model) => (
+                            <div key={`${model.provider}:${model.model}`} className="usage-model-row">
+                              <div>
+                                <strong>{model.model}</strong>
+                                <span>{PROVIDER_LABELS[model.provider]}</span>
+                              </div>
+                              <div className="usage-model-metrics">
+                                <strong>{formatCompactTokenCount(model.totalTokens)}</strong>
+                                <span>{formatTokenCount(model.requestCount)} replies</span>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="usage-empty-inline">No model-level token data yet.</p>
+                        )}
+                      </div>
+                    </>
+                  ) : usageHasRecentReplies ? (
+                    <p className="usage-empty-state">
+                      Recent assistant replies exist, but token metadata was not returned by the provider for this period.
+                    </p>
+                  ) : (
+                    <p className="usage-empty-state">Start chatting to see your token usage trends here.</p>
+                  )}
+                </>
+              ) : (
+                <p className="usage-empty-state">Usage data is not available yet.</p>
+              )}
             </div>
             <div className="card">
               <h3>Providers</h3>
