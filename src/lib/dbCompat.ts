@@ -70,3 +70,14 @@ export async function supportsRateLimitBucket() {
 export async function supportsSessionVersion() {
   return hasColumn('User', 'sessionVersion');
 }
+
+export async function supportsUserProfileFields() {
+  const [hasFullName, hasProfileImageUrl, hasProfileImageSize, hasProfileImageMimeType] = await Promise.all([
+    hasColumn('User', 'fullName'),
+    hasColumn('User', 'profileImageUrl'),
+    hasColumn('User', 'profileImageSize'),
+    hasColumn('User', 'profileImageMimeType')
+  ]);
+
+  return hasFullName && hasProfileImageUrl && hasProfileImageSize && hasProfileImageMimeType;
+}

@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/db';
-import { supportsSessionVersion } from '@/lib/dbCompat';
+import { supportsSessionVersion, supportsUserProfileFields } from '@/lib/dbCompat';
 import { signSession } from '@/lib/session';
 import { setSessionCookie } from '@/lib/cookies';
 import { errorResponse, getClientIp, jsonResponse } from '@/lib/http';
+import { toPublicUser } from '@/lib/userProfile';
 import { authEmailSchema, authPasswordSchema, normalizeEmail } from '@/lib/validators';
 import { takeToken } from '@/lib/rateLimit';
 
@@ -20,7 +21,10 @@ export async function POST(request: Request) {
   try {
     const body = loginSchema.parse(await request.json());
     const email = normalizeEmail(body.email);
-    const sessionVersionEnabled = await supportsSessionVersion();
+    const [sessionVersionEnabled, profileFieldsEnabled] = await Promise.all([
+      supportsSessionVersion(),
+      supportsUserProfileFields()
+    ]);
     const clientIp = getClientIp(request);
     const allowed = await takeToken(`auth:login:${clientIp}:${email}`, LOGIN_RATE_LIMIT, AUTH_WINDOW_MS);
     if (!allowed) {
@@ -30,11 +34,22 @@ export async function POST(request: Request) {
     const user = sessionVersionEnabled
       ? await prisma.user.findUnique({
           where: { email },
-          select: { id: true, email: true, passwordHash: true, sessionVersion: true }
+          select: {
+            id: true,
+            email: true,
+            passwordHash: true,
+            sessionVersion: true,
+            ...(profileFieldsEnabled ? { fullName: true, profileImageUrl: true } : {})
+          }
         })
       : await prisma.user.findUnique({
           where: { email },
-          select: { id: true, email: true, passwordHash: true }
+          select: {
+            id: true,
+            email: true,
+            passwordHash: true,
+            ...(profileFieldsEnabled ? { fullName: true, profileImageUrl: true } : {})
+          }
         });
     if (!user) {
       return errorResponse({ code: 'invalid_credentials', message: 'Invalid credentials' }, 401);
@@ -49,7 +64,7 @@ export async function POST(request: Request) {
     }
     const token = signSession(user.id, sessionVersion);
     await setSessionCookie(token);
-    return jsonResponse({ user: { id: user.id, email: user.email } });
+    return jsonResponse({ user: toPublicUser(user) });
   } catch (error) {
     return errorResponse({ code: 'invalid_request', message: 'Invalid request' }, 400);
   }

@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import { DEMO_COOKIE, buildDemoUsageSnapshot } from '@/lib/demoSession';
 import { getFreeTierConfig, getFreeUsageStatus, isFreeTierConfigured } from '@/lib/freeTier';
 import { jsonResponse } from '@/lib/http';
+import { toPublicUser } from '@/lib/userProfile';
 import { listThreads } from '@/lib/services/threadService';
 import { getRuntimeProvider } from '@/lib/services/threadRuntime';
 
@@ -131,10 +132,7 @@ export async function GET() {
   }
 
   return jsonResponse({
-    user: {
-      id: user.id,
-      email: user.email
-    },
+    user: toPublicUser(user),
     providers,
     models,
     modelsMeta,

@@ -5,6 +5,7 @@ import { supportsSessionVersion } from '@/lib/dbCompat';
 import { signSession } from '@/lib/session';
 import { setSessionCookie } from '@/lib/cookies';
 import { errorResponse, getClientIp, jsonResponse } from '@/lib/http';
+import { toPublicUser } from '@/lib/userProfile';
 import { authEmailSchema, authPasswordSchema, normalizeEmail } from '@/lib/validators';
 import { takeToken } from '@/lib/rateLimit';
 
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
     }
     const token = signSession(user.id, sessionVersion);
     await setSessionCookie(token);
-    return jsonResponse({ user: { id: user.id, email: user.email } }, { status: 201 });
+    return jsonResponse({ user: toPublicUser(user) }, { status: 201 });
   } catch (error) {
     return errorResponse({ code: 'invalid_request', message: 'Invalid request' }, 400);
   }
