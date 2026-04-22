@@ -1322,7 +1322,7 @@ function AppPageClient() {
           : '';
 
   if (loading) {
-    return <main className="container">Loading...</main>;
+    return <main className="app-container">Loading...</main>;
   }
 
   if (showAuthScreen) {
@@ -1452,7 +1452,7 @@ function AppPageClient() {
   }
 
   return (
-    <main className="container">
+    <main className="app-container">
       {/* Header: Email left, Workspace center, Sign out right */}
       <header className="main-header">
         <div className="header-left">
@@ -1993,7 +1993,7 @@ function AppPageClient() {
 
 export default function AppPage() {
   return (
-    <Suspense fallback={<main className="container">Loading...</main>}>
+    <Suspense fallback={<main className="app-container">Loading...</main>}>
       <AppPageClient />
     </Suspense>
   );

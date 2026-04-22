@@ -80,6 +80,20 @@ button {
   overflow: hidden;
 }
 
+.app-container {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 12px clamp(12px, 1.4vw, 24px) 16px;
+  min-height: 100vh;
+  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .landing-container {
   max-width: 1200px;
   margin: 0 auto;
@@ -563,15 +577,15 @@ button {
 
 .app-shell-new {
   display: grid;
-  grid-template-columns: 300px 1fr 340px;
-  gap: 20px;
+  grid-template-columns: clamp(260px, 19vw, 320px) minmax(0, 1fr) clamp(300px, 22vw, 368px);
+  gap: clamp(16px, 1.4vw, 24px);
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
 .app-shell-demo {
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: clamp(260px, 21vw, 320px) minmax(0, 1fr);
 }
 
 .threads-sidebar {
@@ -1932,19 +1946,28 @@ ol.docs-list li {
 
 @media (max-width: 1200px) {
   .app-shell-new {
-    grid-template-columns: 260px 1fr 320px;
+    grid-template-columns: 248px minmax(0, 1fr) 300px;
     gap: 16px;
   }
 
   .app-shell-demo {
-    grid-template-columns: 260px 1fr;
+    grid-template-columns: 248px minmax(0, 1fr);
   }
 }
 
 @media (max-width: 960px) {
+  .app-container {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: 12px 16px 16px;
+    overflow: visible;
+  }
+
   .app-shell-new {
     grid-template-columns: 1fr;
     height: auto;
+    overflow: visible;
   }
 
   .threads-sidebar {
