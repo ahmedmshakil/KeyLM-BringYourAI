@@ -1,11 +1,13 @@
 'use client';
 
+import Link from 'next/link';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { apiJson } from '@/lib/client/api';
 import { readSseStream } from '@/lib/client/sse';
+import { getUserDisplayName, getUserInitials, type PublicUser } from '@/lib/userProfile';
 
 const KEY_PROVIDERS = [
   { id: 'openai', name: 'OpenAI', detail: 'GPT models, strong reasoning' },
@@ -16,7 +18,7 @@ const KEY_PROVIDERS = [
 type KeyProviderId = (typeof KEY_PROVIDERS)[number]['id'];
 type RuntimeProviderId = KeyProviderId | 'groq';
 
-type User = { id: string; email: string };
+type User = PublicUser;
 
 type KeyInfo = {
   id: string;
@@ -361,6 +363,9 @@ function AppPageClient() {
   const usageHasTrackedReplies = (usageDashboard?.coverage30d.messagesWithUsage ?? 0) > 0;
   const usageHasRecentReplies =
     ((usageDashboard?.coverage30d.messagesWithUsage ?? 0) + (usageDashboard?.coverage30d.messagesWithoutUsage ?? 0)) > 0;
+  const userDisplayName = getUserDisplayName(user);
+  const userInitials = getUserInitials(user);
+  const personalizedWelcomeHeading = user?.fullName?.trim() ? `Welcome ${user.fullName.trim()}` : 'Start a new thread to begin chatting.';
 
   const cleanupPrintFrame = () => {
     if (printFrameRef.current) {
@@ -1622,6 +1627,20 @@ function AppPageClient() {
               </div>
             </div>
           )}
+          {!isDemoMode && user && (
+            <div className="card settings-launcher-card">
+              <Link className="settings-launcher-link" href="/settings">
+                <div className="settings-launcher-avatar" aria-hidden="true">
+                  {user.profileImageUrl ? <img src={user.profileImageUrl} alt="" /> : <span>{userInitials}</span>}
+                </div>
+                <div className="settings-launcher-copy">
+                  <strong>Settings</strong>
+                  <span>{userDisplayName}</span>
+                </div>
+                <span className="settings-launcher-arrow">↗</span>
+              </Link>
+            </div>
+          )}
         </aside>
 
         {/* Center - Chat area */}
@@ -1660,12 +1679,14 @@ function AppPageClient() {
                   <h3>
                     {isDemoMode
                       ? 'Ask up to 3 questions without logging in.'
-                      : 'Start a new thread to begin chatting.'}
+                      : personalizedWelcomeHeading}
                   </h3>
                   <p>
                     {isDemoMode
                       ? 'Once the demo limit is finished, KeyLM will prompt you to log in or create an account.'
-                      : 'Pick a model, start a thread, and stream responses in your workspace.'}
+                      : user?.fullName?.trim()
+                        ? 'Pick a model, start a thread, and stream responses in your workspace.'
+                        : 'Pick a model, start a thread, and stream responses in your workspace.'}
                   </p>
                 </div>
               )}
