@@ -1,50 +1,19 @@
-import { Message, Provider, Thread } from '@prisma/client';
+import { Message, Thread } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { ProviderId, UsageInfo } from '@/lib/providers/types';
+import type {
+  ModelUsageSummary,
+  ProviderUsageSummary,
+  TokenTotals,
+  UsageCoverage,
+  UsageDashboardResponse,
+  UsageDensitySummary,
+  UsageRangeKey,
+  UsageRangeSummary,
+  UsageSeriesPoint
+} from '@/lib/usageDashboard';
 import { finalizeUsage } from '@/lib/providers/utils';
 import { getRuntimeProvider } from '@/lib/services/threadRuntime';
-
-export type UsageGrain = 'day' | 'week';
-
-export type TokenTotals = {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  requestCount: number;
-};
-
-export type UsageCoverage = {
-  messagesWithUsage: number;
-  messagesWithoutUsage: number;
-};
-
-export type ProviderUsageSummary = TokenTotals & {
-  provider: ProviderId;
-  percentageOfTotal: number;
-};
-
-export type ModelUsageSummary = TokenTotals & {
-  provider: ProviderId;
-  model: string;
-};
-
-export type UsageSeriesPoint = TokenTotals & {
-  label: string;
-  bucketStart: string;
-  bucketEnd: string;
-};
-
-export type UsageDashboardResponse = {
-  generatedAt: string;
-  defaultGrain: 'day';
-  totals30d: TokenTotals;
-  totals7d: TokenTotals;
-  coverage30d: UsageCoverage;
-  providers30d: ProviderUsageSummary[];
-  models30d: ModelUsageSummary[];
-  daily14d: UsageSeriesPoint[];
-  weekly8w: UsageSeriesPoint[];
-};
 
 type UsageMetadata = {
   usage?: UsageInfo;
@@ -95,6 +64,22 @@ function formatDayLabel(value: Date) {
 
 function formatWeekLabel(value: Date) {
   return `Wk ${formatDayLabel(value)}`;
+}
+
+function startOfUtcMonth(value: Date) {
+  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), 1));
+}
+
+function addUtcMonths(value: Date, months: number) {
+  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + months, 1));
+}
+
+function formatMonthLabel(value: Date) {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    year: '2-digit',
+    timeZone: 'UTC'
+  }).format(value);
 }
 
 function extractUsage(metadata: Message['metadata']) {
@@ -248,6 +233,71 @@ function buildWeeklySeries(items: UsageMessageRecord[], weeks: number, now: Date
   });
 }
 
+function buildMonthlySeries(items: UsageMessageRecord[], months: number, now: Date): UsageSeriesPoint[] {
+  const currentMonthStart = startOfUtcMonth(now);
+  const seriesStart = addUtcMonths(currentMonthStart, -(months - 1));
+  const buckets = new Map<string, UsageMessageRecord[]>();
+
+  for (const item of items) {
+    if (item.createdAt < seriesStart) {
+      continue;
+    }
+
+    const bucketStart = startOfUtcMonth(item.createdAt).toISOString();
+    const bucket = buckets.get(bucketStart) ?? [];
+    bucket.push(item);
+    buckets.set(bucketStart, bucket);
+  }
+
+  return Array.from({ length: months }, (_, index) => {
+    const bucketStart = addUtcMonths(seriesStart, index);
+    const bucketEnd = addUtcMonths(bucketStart, 1);
+    const bucketItems = buckets.get(bucketStart.toISOString()) ?? [];
+
+    return {
+      label: formatMonthLabel(bucketStart),
+      bucketStart: bucketStart.toISOString(),
+      bucketEnd: bucketEnd.toISOString(),
+      ...sumTokenTotals(bucketItems)
+    };
+  });
+}
+
+function buildDensitySummary(points: UsageSeriesPoint[]): UsageDensitySummary {
+  const totalBuckets = points.length;
+  const activeBuckets = points.filter((point) => point.totalTokens > 0 || point.requestCount > 0).length;
+
+  return {
+    activeBuckets,
+    totalBuckets,
+    densityPercentage: totalBuckets > 0 ? (activeBuckets / totalBuckets) * 100 : 0,
+    averageTokensPerActiveBucket:
+      activeBuckets > 0 ? points.reduce((sum, point) => sum + point.totalTokens, 0) / activeBuckets : 0,
+    peakTokens: Math.max(0, ...points.map((point) => point.totalTokens)),
+    peakRequestCount: Math.max(0, ...points.map((point) => point.requestCount))
+  };
+}
+
+function buildRangeSummary(
+  key: UsageRangeKey,
+  label: string,
+  windowLabel: string,
+  items: UsageMessageRecord[],
+  series: UsageSeriesPoint[]
+): UsageRangeSummary {
+  return {
+    key,
+    label,
+    windowLabel,
+    totals: sumTokenTotals(items),
+    coverage: buildCoverage(items),
+    providers: buildProviderUsageSummary(items),
+    models: buildModelUsageSummary(items, 5),
+    series,
+    density: buildDensitySummary(series)
+  };
+}
+
 async function collectUsageMessages(userId: string, windowStart: Date): Promise<UsageMessageRecord[]> {
   const messages = await prisma.message.findMany({
     where: {
@@ -289,23 +339,39 @@ async function collectUsageMessages(userId: string, windowStart: Date): Promise<
 
 export async function getUsageDashboard(userId: string): Promise<UsageDashboardResponse> {
   const now = new Date();
-  const oldestWindowStart = addUtcDays(startOfUtcWeek(now), -7 * 7);
+  const last14dStart = addUtcDays(startOfUtcDay(now), -13);
+  const last8wStart = addUtcDays(startOfUtcWeek(now), -7 * 7);
+  const last12mStart = addUtcMonths(startOfUtcMonth(now), -11);
   const last30dStart = addUtcDays(startOfUtcDay(now), -29);
   const last7dStart = addUtcDays(startOfUtcDay(now), -6);
 
-  const rows = await collectUsageMessages(userId, oldestWindowStart);
+  const rows = await collectUsageMessages(userId, last12mStart);
   const rows30d = rows.filter((row) => row.createdAt >= last30dStart);
   const rows7d = rows.filter((row) => row.createdAt >= last7dStart);
+  const rows14d = rows.filter((row) => row.createdAt >= last14dStart);
+  const rows8w = rows.filter((row) => row.createdAt >= last8wStart);
+  const rows12m = rows.filter((row) => row.createdAt >= last12mStart);
+
+  const daily14d = buildDailySeries(rows, 14, now);
+  const weekly8w = buildWeeklySeries(rows, 8, now);
+  const monthly12m = buildMonthlySeries(rows, 12, now);
 
   return {
     generatedAt: now.toISOString(),
     defaultGrain: 'day',
     totals30d: sumTokenTotals(rows30d),
     totals7d: sumTokenTotals(rows7d),
+    totals12m: sumTokenTotals(rows12m),
     coverage30d: buildCoverage(rows30d),
     providers30d: buildProviderUsageSummary(rows30d),
     models30d: buildModelUsageSummary(rows30d),
-    daily14d: buildDailySeries(rows, 14, now),
-    weekly8w: buildWeeklySeries(rows, 8, now)
+    daily14d,
+    weekly8w,
+    monthly12m,
+    ranges: {
+      day: buildRangeSummary('day', 'Daily', 'Last 14 days', rows14d, daily14d),
+      week: buildRangeSummary('week', 'Weekly', 'Last 8 weeks', rows8w, weekly8w),
+      month: buildRangeSummary('month', 'Monthly', 'Last 12 months', rows12m, monthly12m)
+    }
   };
 }

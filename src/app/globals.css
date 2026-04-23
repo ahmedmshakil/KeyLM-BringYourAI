@@ -593,10 +593,11 @@ button {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  gap: 12px;
 }
 
 .settings-launcher-card {
-  margin-top: 12px;
+  margin-top: auto;
   flex-shrink: 0;
 }
 
@@ -1673,22 +1674,28 @@ button {
 .settings-screen {
   min-height: 100vh;
   min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   padding: 20px clamp(16px, 2vw, 28px);
+  overflow: hidden;
 }
 
 .settings-shell-layout {
   width: min(1280px, 100%);
   margin: 0 auto;
-  min-height: calc(100vh - 40px);
-  min-height: calc(100dvh - 40px);
+  height: calc(100vh - 40px);
+  height: calc(100dvh - 40px);
   display: grid;
   grid-template-columns: clamp(240px, 20vw, 300px) minmax(0, 1fr);
   gap: 20px;
+  align-items: stretch;
+  overflow: hidden;
 }
 
 .settings-shell-sidebar,
 .settings-shell-content {
   height: 100%;
+  min-height: 0;
 }
 
 .settings-shell-sidebar {
@@ -1741,6 +1748,9 @@ button {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .settings-shell-header h2 {
@@ -1824,6 +1834,135 @@ button {
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 8px;
+}
+
+.settings-shell-header-inline {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.settings-token-usage-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-top: 8px;
+}
+
+.settings-usage-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.settings-usage-visual-grid,
+.settings-usage-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.usage-section-card {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.usage-mountain-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.usage-mountain-surface {
+  position: relative;
+  min-height: 220px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(229, 111, 46, 0.1), rgba(47, 127, 119, 0.06));
+}
+
+.usage-mountain-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  background: linear-gradient(
+    to top,
+    transparent 24%,
+    rgba(255, 255, 255, 0.55) 24%,
+    rgba(255, 255, 255, 0.55) 25%,
+    transparent 25%,
+    transparent 49%,
+    rgba(255, 255, 255, 0.55) 49%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 50%,
+    transparent 74%,
+    rgba(255, 255, 255, 0.55) 74%,
+    rgba(255, 255, 255, 0.55) 75%,
+    transparent 75%
+  );
+}
+
+:root.theme-dark .usage-mountain-surface::before {
+  background: linear-gradient(
+    to top,
+    transparent 24%,
+    rgba(255, 255, 255, 0.08) 24%,
+    rgba(255, 255, 255, 0.08) 25%,
+    transparent 25%,
+    transparent 49%,
+    rgba(255, 255, 255, 0.08) 49%,
+    rgba(255, 255, 255, 0.08) 50%,
+    transparent 50%,
+    transparent 74%,
+    rgba(255, 255, 255, 0.08) 74%,
+    rgba(255, 255, 255, 0.08) 75%,
+    transparent 75%
+  );
+}
+
+.usage-mountain-svg {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 190px;
+}
+
+.usage-mountain-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.usage-mountain-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.usage-density-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.usage-density-stat span,
+.usage-density-stat small {
+  color: var(--muted);
+}
+
+.usage-density-stat strong {
+  font-size: 1rem;
 }
 
 .chat-input {
@@ -2185,16 +2324,30 @@ ol.docs-list li {
   }
 
   .settings-screen {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
     padding: 16px;
+    overflow: visible;
   }
 
   .settings-shell-layout,
-  .profile-settings-layout {
+  .profile-settings-layout,
+  .settings-usage-visual-grid,
+  .settings-usage-detail-grid,
+  .usage-mountain-stats {
     grid-template-columns: 1fr;
   }
 
   .settings-shell-layout {
+    height: auto;
     min-height: auto;
+    overflow: visible;
+  }
+
+  .settings-shell-header-inline {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .settings-shell-sidebar,

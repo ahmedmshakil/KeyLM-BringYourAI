@@ -365,7 +365,7 @@ function AppPageClient() {
     ((usageDashboard?.coverage30d.messagesWithUsage ?? 0) + (usageDashboard?.coverage30d.messagesWithoutUsage ?? 0)) > 0;
   const userDisplayName = getUserDisplayName(user);
   const userInitials = getUserInitials(user);
-  const personalizedWelcomeHeading = user?.fullName?.trim() ? `Welcome ${user.fullName.trim()}` : 'Start a new thread to begin chatting.';
+  const personalizedWelcomeHeading = user?.fullName?.trim() ? `Hi, ${user.fullName.trim()}` : 'Start a new thread to begin chatting.';
 
   const cleanupPrintFrame = () => {
     if (printFrameRef.current) {
