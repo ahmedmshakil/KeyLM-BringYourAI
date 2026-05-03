@@ -5,6 +5,9 @@ export const runtimeProviderSchema = z.enum(['openai', 'gemini', 'anthropic', 'g
 
 export const authEmailSchema = z.string().trim().min(3).max(320).email();
 export const authPasswordSchema = z.string().min(8).max(256);
+export const passwordlessMethodSchema = z.enum(['magic_link', 'otp']);
+export const authCaptchaTokenSchema = z.string().trim().min(1).max(4096);
+export const authOtpTokenSchema = z.string().trim().min(6).max(12);
 export const profileFullNameSchema = z.string().trim().max(120);
 
 export function normalizeEmail(email: string) {

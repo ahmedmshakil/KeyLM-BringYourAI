@@ -18,12 +18,14 @@ enum Provider {
 model User {
   id            String        @id @default(cuid())
   email         String        @unique
-  passwordHash  String
+  passwordHash  String?
+  supabaseUserId String?      @unique
   fullName      String?
   profileImageUrl String?
   profileImageSize Int?
   profileImageMimeType String?
   sessionVersion Int          @default(0)
+  lastLoginAt   DateTime?
   createdAt     DateTime      @default(now())
   passwordResetTokens PasswordResetToken[]
   providerKeys  ProviderKey[]
