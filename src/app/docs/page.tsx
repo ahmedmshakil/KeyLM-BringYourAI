@@ -29,7 +29,7 @@ const quickStartSteps = [
   },
   {
     title: 'Create the environment file',
-    code: 'cp .env.example .env\n# set DATABASE_URL, APP_AUTH_SECRET, APP_ENCRYPTION_KEY, GROQ_API_KEY'
+    code: 'cp .env.example .env\n# set DATABASE_URL, APP_AUTH_SECRET, APP_ENCRYPTION_KEY, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, GROQ_API_KEY'
   },
   {
     title: 'Generate an encryption key',
@@ -67,7 +67,7 @@ const highlights = [
 const architectureModules = [
   {
     title: 'Auth and sessions',
-    description: 'Email and password auth with signed, httpOnly session cookies.'
+    description: 'Supabase passwordless email auth with Magic Links/OTP and signed, httpOnly app session cookies.'
   },
   {
     title: 'Key management',
@@ -114,12 +114,14 @@ const endpointGroups = [
   {
     title: 'Auth',
     items: [
-      { method: 'POST', path: '/api/auth/register', description: 'Create an account and start a session.' },
-      { method: 'POST', path: '/api/auth/login', description: 'Authenticate and start a session.' },
+      { method: 'POST', path: '/api/auth/register', description: 'Send a Supabase passwordless signup Magic Link or OTP.' },
+      { method: 'POST', path: '/api/auth/login', description: 'Send a Supabase passwordless login Magic Link or OTP.' },
+      { method: 'POST', path: '/api/auth/verify-otp', description: 'Verify an email OTP and start the app session.' },
+      { method: 'GET', path: '/auth/callback', description: 'Handle Magic Link callback, sync the user, and start the app session.' },
       { method: 'POST', path: '/api/auth/logout', description: 'Clear the session cookie.' },
       { method: 'GET', path: '/api/auth/me', description: 'Return the current session user.' },
-      { method: 'POST', path: '/api/auth/password-reset/request', description: 'Create a password reset token.' },
-      { method: 'POST', path: '/api/auth/password-reset/confirm', description: 'Finish a password reset.' }
+      { method: 'POST', path: '/api/auth/password-reset/request', description: 'Legacy password reset endpoint; passwordless auth does not require it.' },
+      { method: 'POST', path: '/api/auth/password-reset/confirm', description: 'Legacy password reset confirmation endpoint.' }
     ]
   },
   {
@@ -179,7 +181,7 @@ const endpointGroups = [
 const dataModels = [
   {
     title: 'User',
-    fields: 'id, email, passwordHash, createdAt'
+    fields: 'id, email, passwordHash?, supabaseUserId, lastLoginAt, createdAt'
   },
   {
     title: 'ProviderKey',
@@ -290,6 +292,22 @@ export default function DocsPage() {
             <dd>HMAC secret for signing session tokens.</dd>
           </div>
           <div>
+            <dt>NEXT_PUBLIC_SUPABASE_URL</dt>
+            <dd>Supabase project URL used for passwordless Email Auth.</dd>
+          </div>
+          <div>
+            <dt>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</dt>
+            <dd>Supabase publishable/anon key used to request Magic Links and verify OTP codes.</dd>
+          </div>
+          <div>
+            <dt>NEXT_PUBLIC_TURNSTILE_SITE_KEY</dt>
+            <dd>Cloudflare Turnstile public site key rendered on the passwordless login/register form.</dd>
+          </div>
+          <div>
+            <dt>APP_PUBLIC_BASE_URL</dt>
+            <dd>Public app origin used to build the /auth/callback Magic Link redirect URL.</dd>
+          </div>
+          <div>
             <dt>APP_ENCRYPTION_KEY</dt>
             <dd>32-byte base64 key for encrypting provider secrets.</dd>
           </div>
@@ -323,9 +341,14 @@ export default function DocsPage() {
           </div>
           <div>
             <dt>PASSWORD_RESET_TTL_MINUTES</dt>
-            <dd>Optional TTL for password reset tokens (defaults to 60).</dd>
+            <dd>Legacy password reset TTL. Passwordless OTP/link expiry is configured in Supabase Auth as 900 seconds.</dd>
           </div>
         </dl>
+        <p className="tagline">
+          Supabase setup: enable Email Auth, add http://localhost:3000/auth/callback and your production callback URL to Auth redirect URLs,
+          set Email OTP expiry to 900 seconds, enable Captcha with Cloudflare Turnstile, add TURNSTILE_SECRET_KEY only in Supabase Dashboard,
+          and include both the Magic Link and OTP token in the Supabase email template if you want users to choose either method.
+        </p>
       </section>
 
       <section id="flow" className="card docs-section">
@@ -421,7 +444,7 @@ export default function DocsPage() {
         <ul className="docs-list">
           <li>Provider keys are encrypted at rest and never returned in plaintext.</li>
           <li>The shared Groq key stays server-side and is never exposed to clients.</li>
-          <li>Passwords are hashed with bcrypt and sessions are signed server-side.</li>
+          <li>Supabase verifies Magic Links/OTPs; the app then issues its existing signed httpOnly session cookie.</li>
           <li>Rate limiting protects chat streaming and password reset requests.</li>
           <li>Audit logs track key lifecycle events for traceability.</li>
           <li>Model and thread access is scoped to the authenticated user.</li>
