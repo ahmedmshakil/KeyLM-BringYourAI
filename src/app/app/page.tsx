@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { Turnstile } from '@marsidev/react-turnstile';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { apiJson } from '@/lib/client/api';
@@ -153,6 +154,8 @@ type BootstrapPayload = {
   demo: DemoUsageInfo;
 };
 
+type PasswordlessMethod = 'magic_link' | 'otp';
+
 const createEmptyProviders = (): Record<KeyProviderId, KeyInfo[]> => ({
   openai: [],
   gemini: [],
@@ -193,6 +196,8 @@ const PROVIDER_LABELS: Record<RuntimeProviderId, string> = {
   anthropic: 'Anthropic',
   groq: 'KeyLM Free'
 };
+
+const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
 const truncateWords = (value: string, limit: number) => {
   const cleaned = value.replace(/\s+/g, ' ').trim();
@@ -284,12 +289,17 @@ function AppPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedAuthView = searchParams.get('auth');
+  const requestedAuthError = searchParams.get('auth_error');
   const demoModeRequested = searchParams.get('demo') === '1';
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [authView, setAuthView] = useState<'login' | 'register' | 'reset'>('login');
   const [authEmail, setAuthEmail] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
+  const [authOtpCode, setAuthOtpCode] = useState('');
+  const [authPendingEmail, setAuthPendingEmail] = useState('');
+  const [authPendingMethod, setAuthPendingMethod] = useState<PasswordlessMethod | null>(null);
+  const [authSubmittingMethod, setAuthSubmittingMethod] = useState<PasswordlessMethod | 'verify' | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [resetEmail, setResetEmail] = useState('');
   const [resetLink, setResetLink] = useState('');
   const [authNotice, setAuthNotice] = useState('');
@@ -657,9 +667,23 @@ function AppPageClient() {
       setAuthView(requestedAuthView);
       setAuthNotice('');
       setAuthNoticeTone('error');
+      setAuthOtpCode('');
+      setAuthPendingEmail('');
+      setAuthPendingMethod(null);
+      setAuthSubmittingMethod(null);
       setResetLink('');
     }
   }, [requestedAuthView]);
+
+  useEffect(() => {
+    if (requestedAuthError === 'passwordless_callback_failed') {
+      setAuthNoticeTone('error');
+      setAuthNotice('Magic link is invalid or expired. Request a new 15-minute link or OTP to continue.');
+      setAuthOtpCode('');
+      setAuthPendingEmail('');
+      setAuthPendingMethod(null);
+    }
+  }, [requestedAuthError]);
 
   useEffect(() => {
     if (!user) {
@@ -790,27 +814,103 @@ function AppPageClient() {
     }
   };
 
-  const handleAuth = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const resetPasswordlessState = () => {
+    setAuthOtpCode('');
+    setAuthPendingEmail('');
+    setAuthPendingMethod(null);
+    setAuthSubmittingMethod(null);
+    setCaptchaToken(null);
+  };
+
+  const handlePasswordlessRequest = async (method: PasswordlessMethod) => {
     if (authView === 'reset') {
       return;
     }
+    const email = authEmail.trim();
+    if (!email) {
+      setAuthNoticeTone('error');
+      setAuthNotice('Enter your email to receive a secure magic link or OTP.');
+      return;
+    }
+    if (!turnstileSiteKey) {
+      setAuthNoticeTone('error');
+      setAuthNotice('Turnstile is not configured yet. Add NEXT_PUBLIC_TURNSTILE_SITE_KEY first.');
+      return;
+    }
+    if (!captchaToken) {
+      setAuthNoticeTone('error');
+      setAuthNotice('Please complete the verification before continuing.');
+      return;
+    }
+
     setAuthNotice('');
     setAuthNoticeTone('error');
+    setAuthSubmittingMethod(method);
     try {
-      const res = await apiJson<{ user: User }>(`/api/auth/${authView}`, {
+      const res = await apiJson<{ ok: boolean; method: PasswordlessMethod; message: string }>(`/api/auth/${authView}`, {
         method: 'POST',
-        body: JSON.stringify({ email: authEmail, password: authPassword })
+        body: JSON.stringify({ email, method, captchaToken })
+      });
+
+      setAuthPendingEmail(email);
+      setAuthPendingMethod(method);
+      setAuthOtpCode('');
+      setCaptchaToken(null);
+      setResetEmail('');
+      setResetLink('');
+      setAuthNoticeTone('success');
+      setAuthNotice(res.message);
+    } catch (error) {
+      setAuthNotice(error instanceof Error ? error.message : 'Passwordless auth failed');
+    } finally {
+      setAuthSubmittingMethod(null);
+    }
+  };
+
+  const handleOtpVerify = async (event?: React.FormEvent) => {
+    event?.preventDefault();
+    const email = (authPendingEmail || authEmail).trim();
+    const token = authOtpCode.trim();
+    if (!email) {
+      setAuthNoticeTone('error');
+      setAuthNotice('Enter your email before verifying the OTP.');
+      return;
+    }
+    if (!token) {
+      setAuthNoticeTone('error');
+      setAuthNotice('Enter the OTP from your email.');
+      return;
+    }
+
+    setAuthNotice('');
+    setAuthNoticeTone('error');
+    setAuthSubmittingMethod('verify');
+    try {
+      await apiJson<{ user: User }>('/api/auth/verify-otp', {
+        method: 'POST',
+        body: JSON.stringify({ email, token })
       });
       setAuthEmail('');
-      setAuthPassword('');
+      resetPasswordlessState();
       setResetEmail('');
       setResetLink('');
       setAuthNotice('');
       await loadBootstrap(true);
+      router.replace('/app');
     } catch (error) {
-      setAuthNotice(error instanceof Error ? error.message : 'Auth failed');
+      setAuthNotice(error instanceof Error ? error.message : 'OTP verification failed');
+    } finally {
+      setAuthSubmittingMethod(null);
     }
+  };
+
+  const handleAuth = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (authPendingMethod === 'otp') {
+      await handleOtpVerify();
+      return;
+    }
+    await handlePasswordlessRequest('magic_link');
   };
 
   const handleResetRequest = async (event: React.FormEvent) => {
@@ -858,7 +958,7 @@ function AppPageClient() {
     setAuthNoticeTone('error');
     setResetLink('');
     setAuthEmail('');
-    setAuthPassword('');
+    resetPasswordlessState();
     setResetEmail('');
   };
 
@@ -1306,6 +1406,9 @@ function AppPageClient() {
 
   const isResetView = authView === 'reset';
   const isLoginView = authView === 'login';
+  const authModeLabel = isLoginView ? 'sign in' : 'create your account';
+  const authBusy = authSubmittingMethod !== null;
+  const authSendDisabled = authBusy || !captchaToken || !turnstileSiteKey;
   const showAuthScreen = !user && !isDemoMode;
   const displayedMessages = isDemoMode ? demoMessages : activeThread?.messages ?? [];
   const demoModelLabel = demoUsage.model || createDefaultDemoUsage().model;
@@ -1387,6 +1490,9 @@ function AppPageClient() {
                 <h2>{isLoginView ? 'Welcome back' : 'Create account'}</h2>
                 <p>{isLoginView ? 'Sign in to continue to your workspace' : 'Get started in just a few seconds'}</p>
               </div>
+              <p className="auth-encourage">
+                Stop memorizing passwords — use a secure 15-minute OTP or magic link to access your workspace.
+              </p>
               <div className="auth-form-group">
                 <label htmlFor="email">Email address</label>
                 <input
@@ -1399,38 +1505,76 @@ function AppPageClient() {
                   required
                 />
               </div>
-              <div className="auth-form-group">
-                <label htmlFor="password">Password</label>
-                <input
-                  className="auth-input"
-                  id="password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={authPassword}
-                  onChange={(event) => setAuthPassword(event.target.value)}
-                  required
-                />
-              </div>
-              {isLoginView && (
-                <div className="auth-links">
-                  <button
-                    className="auth-link"
-                    type="button"
-                    onClick={() => {
-                      setAuthView('reset');
-                      setResetEmail(authEmail);
-                      setAuthNotice('');
-                      setAuthNoticeTone('error');
-                      setResetLink('');
+              <div className="auth-turnstile-panel">
+                {turnstileSiteKey ? (
+                  <Turnstile
+                    key={`${authView}-${authPendingMethod ?? 'request'}-${captchaToken ? 'verified' : 'empty'}`}
+                    siteKey={turnstileSiteKey}
+                    onSuccess={(token) => {
+                      setCaptchaToken(token);
+                      if (authNotice === 'Please complete the verification before continuing.') {
+                        setAuthNotice('');
+                      }
                     }}
+                    onExpire={() => setCaptchaToken(null)}
+                    onError={() => setCaptchaToken(null)}
+                  />
+                ) : (
+                  <p className="auth-turnstile-missing">
+                    Turnstile site key missing. Add NEXT_PUBLIC_TURNSTILE_SITE_KEY to enable secure login.
+                  </p>
+                )}
+              </div>
+              <div className="auth-method-grid" aria-label="Passwordless sign-in methods">
+                <button
+                  className="auth-button primary"
+                  type="button"
+                  disabled={authSendDisabled}
+                  onClick={() => void handlePasswordlessRequest('magic_link')}
+                >
+                  {authSubmittingMethod === 'magic_link' ? 'Sending link...' : 'Send magic link'}
+                </button>
+                <button
+                  className="auth-button secondary"
+                  type="button"
+                  disabled={authSendDisabled}
+                  onClick={() => void handlePasswordlessRequest('otp')}
+                >
+                  {authSubmittingMethod === 'otp' ? 'Sending OTP...' : 'Send OTP code'}
+                </button>
+              </div>
+              <p className="auth-helper-text">
+                Supabase will email your selected method. Links and codes should be configured to expire after 15 minutes.
+              </p>
+              {authPendingMethod === 'otp' && (
+                <div className="auth-otp-panel">
+                  <div className="auth-form-group">
+                    <label htmlFor="otp-code">One-time password</label>
+                    <input
+                      className="auth-input auth-otp-input"
+                      id="otp-code"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      placeholder="123456"
+                      value={authOtpCode}
+                      onChange={(event) => setAuthOtpCode(event.target.value)}
+                    />
+                  </div>
+                  <button
+                    className="auth-button primary"
+                    type="submit"
+                    disabled={authBusy}
                   >
-                    Forgot password?
+                    {authSubmittingMethod === 'verify' ? 'Verifying...' : 'Verify OTP & continue'}
                   </button>
                 </div>
               )}
-              <button className="auth-button primary" type="submit">
-                {isLoginView ? 'Sign in' : 'Create account'}
-              </button>
+              {authPendingEmail && (
+                <p className="auth-helper-text">
+                  Sent to <strong>{authPendingEmail}</strong>. Did not get it? You can send a new magic link or OTP.
+                </p>
+              )}
               <div className="auth-divider">
                 <span>or</span>
               </div>
@@ -1441,11 +1585,13 @@ function AppPageClient() {
                   setAuthView(isLoginView ? 'register' : 'login');
                   setAuthNotice('');
                   setAuthNoticeTone('error');
+                  resetPasswordlessState();
                   setResetLink('');
                 }}
               >
                 {isLoginView ? 'Create a new account' : 'Sign in to existing account'}
               </button>
+              <p className="auth-helper-text">Use your email to {authModeLabel}; no password required.</p>
               {authNotice && (
                 <p className={`auth-notice ${authNoticeTone === 'success' ? 'success' : ''}`}>{authNotice}</p>
               )}
