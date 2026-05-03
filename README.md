@@ -1,197 +1,74 @@
-# KeyLM - Bring Your AI
+# KeyLM — Bring Your AI
 
-***Your keys. Your models. Your control.**
+**Your keys. Your models. Your control.**
 
-A unified chat workspace for OpenAI, Gemini, and Anthropic with a built-in Groq free fallback. Store your API keys securely, switch between providers seamlessly, and chat with streaming responses all in one place.
+KeyLM is a unified AI chat workspace where users can start with a shared Groq-powered free tier, then bring their own OpenAI, Gemini, or Anthropic API keys for full control. It keeps provider keys encrypted, discovers models automatically, saves threaded conversations, and streams responses in real time.
 
 ![KeyLM Dashboard](readmePics/home.png)
 
 ## ✨ Features
 
-- **BYOK (Bring Your Own Key)** - Use your own API keys from OpenAI, Gemini, and Anthropic
-- **KeyLM Free** - New accounts can use a shared Groq model with daily user/global quotas
-- **Encrypted Storage** - Keys are encrypted at rest and never exposed to the client
-- **Multi-Provider Support** - Switch between AI providers without losing context
-- **Auto Model Discovery** - Automatically fetches and caches available models per provider
-- **Token Usage Tracking** - Assistant replies show prompt/output/total token usage when available
-- **Smart Upsell Notice** - After 5 free requests, users see a reminder to switch to their own key for better quality
+- **BYOK workspace** — connect and use your own OpenAI, Gemini, or Anthropic API keys.
+- **KeyLM Free** — new users can chat through a shared Groq fallback with daily quotas.
+- **Encrypted key storage** — provider keys are encrypted at rest and never exposed to the client.
+- **Multi-provider chat** — switch providers and models without changing apps.
+- **Auto model discovery** — fetch and cache model lists per connected provider key.
+- **Threaded history** — save conversations, provider/model choices, settings, and token usage.
+- **Streaming responses** — receive assistant replies through Server-Sent Events (SSE).
+- **Usage visibility** — show prompt/output/total token usage when provider data is available.
 
-## 🧱 Architecture Overview
+## 📚 Documentation
 
-KeyLM is a **single Next.js full-stack application**. The UI, API layer, auth, provider integrations, streaming, and persistence live in one codebase.
+Use the guides below to run, deploy, and understand the project.
 
-### Main building blocks
+<table>
+  <tr>
+    <td width="33%" align="center">
+      <a href="docs/LOCAL_AND_DOCKER_RUN.md">
+        <strong>🚀 Local & Docker Run</strong>
+      </a>
+      <br />
+      <sub>Install, configure env, run locally, or start the full Docker stack.</sub>
+    </td>
+    <td width="33%" align="center">
+      <a href="docs/SUPABASE_DEPLOYMENT.md">
+        <strong>☁️ Supabase Deployment</strong>
+      </a>
+      <br />
+      <sub>Set up Supabase Postgres/Auth, env variables, redirects, and production deployment.</sub>
+    </td>
+    <td width="33%" align="center">
+      <a href="docs/PROJECT_OVERVIEW.md">
+        <strong>🏗️ Goals & Architecture</strong>
+      </a>
+      <br />
+      <sub>Project goal, problem solved, runtime flow, services, data model, and security notes.</sub>
+    </td>
+  </tr>
+</table>
 
-- **Frontend UI**: `src/app/app/page.tsx`
-  - Main authenticated workspace
-  - Handles login/register/reset flows, provider key management, model selection, threads, and streaming chat UI
-- **API routes**: `src/app/api/**`
-  - Auth endpoints (`/api/auth/*`)
-  - Bootstrap endpoint (`/api/app/bootstrap`)
-  - Provider key/model endpoints (`/api/providers/*`)
-  - Thread/message endpoints (`/api/threads/*`)
-  - Free-tier and demo endpoints
-- **Service layer**: `src/lib/services/**`
-  - Thread lifecycle
-  - Message persistence
-  - Provider key validation/storage
-  - Model caching
-- **Provider adapters**: `src/lib/providers/**`
-  - OpenAI, Gemini, Anthropic, and Groq integrations
-  - Unified validate/list-models/chat/stream interfaces
-- **Security and platform utilities**: `src/lib/**`
-  - Signed session cookies
-  - AES-256-GCM key encryption
-  - Password reset flow
-  - DB-backed rate limiting
-  - Groq free-tier quota handling
-- **Persistence**: `prisma/**`
-  - PostgreSQL schema and migrations
-  - Stores users, encrypted provider keys, model caches, threads, messages, audit logs, free-tier usage, and rate-limit buckets
+### Quick links
 
-### Runtime flow
+- [Run locally or with Docker](docs/LOCAL_AND_DOCKER_RUN.md)
+- [Deploy with Supabase](docs/SUPABASE_DEPLOYMENT.md)
+- [Read project goals and architecture](docs/PROJECT_OVERVIEW.md)
 
-1. The app boots through `/api/app/bootstrap`
-2. Session state is resolved from signed HTTP-only cookies
-3. User provider keys are validated and stored encrypted in PostgreSQL
-4. Available models are fetched and cached per active key
-5. Thread messages are persisted in PostgreSQL
-6. Chat responses are streamed back to the client via SSE
-7. If no BYOK provider is connected, Groq free-tier fallback can be used when configured
+## 🧱 Tech Stack
 
-## ⚙️ Environment Variables
-
-### Required
-
-- `DATABASE_URL`
-- `DIRECT_URL`
-- `APP_AUTH_SECRET`
-- `APP_ENCRYPTION_KEY`
-
-### Optional
-
-- `APP_PUBLIC_BASE_URL`
-- `RATE_LIMIT_PER_MINUTE`
-- `PASSWORD_RESET_TTL_MINUTES`
-- `PROVIDER_REQUEST_TIMEOUT_MS`
-- `GROQ_API_KEY`
-- `GROQ_BASE_URL`
-- `GROQ_FREE_MODEL`
-- `GROQ_FREE_FALLBACK_MODELS`
-- `FREE_USER_DAILY_LIMIT`
-- `FREE_GLOBAL_DAILY_LIMIT`
-
-##  Quick Start
-
-### 1. Install dependencies
-```bash
-npm install
-```
-
-### 2. Configure environment
-```bash
-cp .env.example .env
-```
-
-Set the required secrets before starting the app:
-
-- `APP_AUTH_SECRET` for signed auth sessions
-- `APP_ENCRYPTION_KEY` for encrypted provider keys
-- `GROQ_API_KEY` if you want KeyLM Free enabled
-
-Optional hardening/runtime settings:
-
-- `PASSWORD_RESET_TTL_MINUTES` to change reset-link expiry
-- `PROVIDER_REQUEST_TIMEOUT_MS` to cap upstream provider request duration
-
-
-### 3. Setup database
-```bash
-npx prisma migrate deploy
-```
-
-For local development, you can use:
-
-```bash
-npx prisma migrate dev
-```
-
-### 4. Run the app
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) and create an account to get started. New users can chat on the shared Groq free tier until they connect their own provider key.
-
-## 🐳 Docker Quick Start
-
-This repository now includes a clean production-style Docker setup for the **entire stack**:
-
-- **app**: Next.js standalone production server
-- **db**: PostgreSQL
-- **migrate**: one-off Prisma migration runner
-
-### 1. Prepare Docker environment
-
-```bash
-cp .env.docker.example .env
-```
-
-Then set at least:
-
-- `APP_AUTH_SECRET`
-- `APP_ENCRYPTION_KEY`
-
-If you want KeyLM Free enabled, also set:
-
-- `GROQ_API_KEY`
-
-### 2. Start the whole project
-
-```bash
-docker compose up --build
-```
-
-This single command will:
-
-1. start PostgreSQL
-2. wait until the database is healthy
-3. apply Prisma migrations
-4. build the Next.js app image
-5. run the app on [http://localhost:3000](http://localhost:3000)
-
-### 3. Stop the stack
-
-```bash
-docker compose down
-```
-
-### 4. Reset everything including database volume
-
-```bash
-docker compose down -v
-```
-
-### Docker files included
-
-- `Dockerfile` — multi-stage app image build
-- `docker-compose.yml` — app + db + migration orchestration
-- `.dockerignore` — optimized build context
-- `.env.docker.example` — local Docker env template
-
-
-
-## 🏗️ Tech Stack
-
-- **Frontend**: Next.js 16 (App Router), React, TypeScript
-- **Backend**: Next.js API Routes
+- **Framework**: Next.js 16 App Router
+- **Language**: TypeScript
+- **UI**: React, CSS modules/global styles
+- **Backend**: Next.js Route Handlers
 - **Database**: PostgreSQL with Prisma ORM
-- **Auth**: Custom JWT-based authentication
-- **Encryption**: AES-256-GCM for API key storage
+- **Auth**: Supabase passwordless email auth + signed HTTP-only app sessions
+- **Security**: AES-256-GCM encryption for provider API keys
 - **Streaming**: Server-Sent Events (SSE)
+- **AI Providers**: OpenAI, Gemini, Anthropic, and Groq free fallback
+- **Containerization**: Docker + Docker Compose
 
 ## 👨‍💻 Author
 
-** Shakil Ahmed**
+**Shakil Ahmed**
 
 - GitHub: [@ahmedmshakil](https://github.com/ahmedmshakil)
+
