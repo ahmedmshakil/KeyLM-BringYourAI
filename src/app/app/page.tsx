@@ -1407,6 +1407,8 @@ function AppPageClient() {
   const isResetView = authView === 'reset';
   const isLoginView = authView === 'login';
   const authModeLabel = isLoginView ? 'sign in' : 'create your account';
+  const passwordlessLinkButtonLabel = isLoginView ? 'Send login link' : 'Send signup link';
+  const passwordlessLinkSubmittingLabel = isLoginView ? 'Sending login link...' : 'Sending signup link...';
   const authBusy = authSubmittingMethod !== null;
   const authSendDisabled = authBusy || !captchaToken || !turnstileSiteKey;
   const showAuthScreen = !user && !isDemoMode;
@@ -1490,9 +1492,6 @@ function AppPageClient() {
                 <h2>{isLoginView ? 'Welcome back' : 'Create account'}</h2>
                 <p>{isLoginView ? 'Sign in to continue to your workspace' : 'Get started in just a few seconds'}</p>
               </div>
-              <p className="auth-encourage">
-                Stop memorizing passwords — use a secure 15-minute OTP or magic link to access your workspace.
-              </p>
               <div className="auth-form-group">
                 <label htmlFor="email">Email address</label>
                 <input
@@ -1532,8 +1531,9 @@ function AppPageClient() {
                   disabled={authSendDisabled}
                   onClick={() => void handlePasswordlessRequest('magic_link')}
                 >
-                  {authSubmittingMethod === 'magic_link' ? 'Sending link...' : 'Send magic link'}
+                  {authSubmittingMethod === 'magic_link' ? passwordlessLinkSubmittingLabel : passwordlessLinkButtonLabel}
                 </button>
+                {/* TODO: Re-enable OTP sign-in/sign-up after OTP UX is finalized.
                 <button
                   className="auth-button secondary"
                   type="button"
@@ -1542,10 +1542,9 @@ function AppPageClient() {
                 >
                   {authSubmittingMethod === 'otp' ? 'Sending OTP...' : 'Send OTP code'}
                 </button>
+                */}
               </div>
-              <p className="auth-helper-text">
-                Supabase will email your selected method. Links and codes should be configured to expire after 15 minutes.
-              </p>
+              {/* TODO: Re-enable OTP verification panel after OTP UX is finalized.
               {authPendingMethod === 'otp' && (
                 <div className="auth-otp-panel">
                   <div className="auth-form-group">
@@ -1570,9 +1569,10 @@ function AppPageClient() {
                   </button>
                 </div>
               )}
+              */}
               {authPendingEmail && (
                 <p className="auth-helper-text">
-                  Sent to <strong>{authPendingEmail}</strong>. Did not get it? You can send a new magic link or OTP.
+                  Sent to <strong>{authPendingEmail}</strong>. Did not get it? Wait 30 seconds and resend.
                 </p>
               )}
               <div className="auth-divider">

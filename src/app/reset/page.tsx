@@ -14,9 +14,6 @@ export default function ResetPage() {
             <h2>Use passwordless sign in</h2>
             <p>Request a secure 15-minute magic link or OTP from the sign-in screen.</p>
           </div>
-          <p className="auth-encourage">
-            Stop memorizing passwords — your email link or one-time code is enough to continue securely.
-          </p>
           <Link className="auth-button primary" href="/app?auth=login">
             Back to sign in
           </Link>

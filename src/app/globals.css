@@ -1251,18 +1251,6 @@ button {
   color: var(--muted);
 }
 
-.auth-encourage {
-  margin: -8px 0 20px;
-  padding: 12px 14px;
-  border: 1px solid #cbe6d7;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #e8f4ee, rgba(232, 244, 238, 0.45));
-  color: var(--success);
-  font-size: 0.9rem;
-  line-height: 1.45;
-  text-align: center;
-}
-
 .auth-button {
   display: inline-flex;
   align-items: center;
