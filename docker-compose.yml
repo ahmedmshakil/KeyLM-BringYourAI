@@ -16,42 +16,53 @@ services:
       timeout: 5s
       retries: 20
 
-  migrate:
-    build:
-      context: .
-      target: deps
-    restart: "no"
-    depends_on:
-      db:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-keylm}?schema=public
-      DIRECT_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-keylm}?schema=public
-    command: ["npx", "prisma", "migrate", "deploy"]
-
   app:
     build:
       context: .
-      target: runner
+      dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    env_file:
-      - .env
     environment:
-      NODE_ENV: production
-      PORT: 3000
+      NODE_ENV: development
+      PORT: "3000"
       HOSTNAME: 0.0.0.0
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-keylm}?schema=public
-      DIRECT_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-keylm}?schema=public
+      NEXT_TELEMETRY_DISABLED: "1"
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+
+      # Local compose database. These override DATABASE_URL/DIRECT_URL from .env
+      # so one command always connects the app to the bundled Postgres service.
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-keylm}?schema=public"
+      DIRECT_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-keylm}?schema=public"
+
+      # Supabase/Turnstile public auth config from .env.example.
+      # Leave blank for boot-only local UI, or set real values in .env for login.
+      NEXT_PUBLIC_SUPABASE_URL: "${NEXT_PUBLIC_SUPABASE_URL:-}"
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:-}"
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: "${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}"
+
+      # Safe local-development defaults. Override in .env for real usage.
+      APP_AUTH_SECRET: "${APP_AUTH_SECRET:-dev-only-insecure-auth-secret-change-me}"
+      APP_ENCRYPTION_KEY: "${APP_ENCRYPTION_KEY:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}"
+      APP_PUBLIC_BASE_URL: "${APP_PUBLIC_BASE_URL:-http://localhost:3000}"
+      RATE_LIMIT_PER_MINUTE: "${RATE_LIMIT_PER_MINUTE:-60}"
+      PASSWORD_RESET_TTL_MINUTES: "${PASSWORD_RESET_TTL_MINUTES:-60}"
+      PROVIDER_REQUEST_TIMEOUT_MS: "${PROVIDER_REQUEST_TIMEOUT_MS:-30000}"
+
+      # Optional Groq-backed KeyLM free tier from .env.example.
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      GROQ_BASE_URL: "${GROQ_BASE_URL:-https://api.groq.com/openai/v1}"
+      GROQ_FREE_MODEL: "${GROQ_FREE_MODEL:-moonshotai/kimi-k2-instruct-0905}"
+      GROQ_FREE_FALLBACK_MODELS: "${GROQ_FREE_FALLBACK_MODELS:-llama-3.1-8b-instant}"
+      FREE_USER_DAILY_LIMIT: "${FREE_USER_DAILY_LIMIT:-50}"
+      FREE_GLOBAL_DAILY_LIMIT: "${FREE_GLOBAL_DAILY_LIMIT:-1000}"
     ports:
       - "${APP_PORT:-3000}:3000"
+    volumes:
+      - .:/app
+      - app_node_modules:/app/node_modules
     healthcheck:
       test:
         [
@@ -67,3 +78,4 @@ services:
 
 volumes:
   postgres_data:
+  app_node_modules:

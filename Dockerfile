@@ -1,46 +1,38 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:20-bookworm-slim AS base
-WORKDIR /app
-ENV NEXT_TELEMETRY_DISABLED=1
+# Local development image for KeyLM.
+# Use with `docker compose up --build` to run Next.js dev server + local Postgres.
+FROM node:20-bookworm-slim
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends openssl ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
-
-COPY package.json package-lock.json ./
-COPY prisma ./prisma
-
-FROM base AS deps
-RUN npm ci
-
-FROM deps AS builder
-COPY next.config.js tsconfig.json next-env.d.ts ./
-COPY src ./src
-RUN npm run build
-
-FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 
-ENV NODE_ENV=production \
+ENV NODE_ENV=development \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
-    NEXT_TELEMETRY_DISABLED=1
+    NEXT_TELEMETRY_DISABLED=1 \
+    WATCHPACK_POLLING=true \
+    CHOKIDAR_USEPOLLING=true
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
-  && groupadd --system --gid 1001 nodejs \
-  && useradd --system --uid 1001 --gid 1001 nextjs
+  && chown -R node:node /app
 
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=deps /app/prisma ./prisma
-COPY --from=deps /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=deps /app/node_modules/@prisma ./node_modules/@prisma
+USER node
 
-USER nextjs
+# Install dependencies first so Docker can cache this layer between source edits.
+COPY --chown=node:node package.json package-lock.json ./
+COPY --chown=node:node prisma ./prisma
+RUN npm ci
+
+# Source is copied for `docker build`; docker-compose also bind-mounts the
+# project directory for live reload during local development.
+COPY --chown=node:node . .
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+# One-command local startup:
+# 1. regenerate Prisma client for the mounted source
+# 2. apply existing migrations to the local compose database
+# 3. start Next.js dev server on all interfaces so the host can access it
+CMD ["sh", "-c", "npm run prisma:generate && npm run prisma:deploy && npm run dev -- --hostname 0.0.0.0 --port 3000"]
