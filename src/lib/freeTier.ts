@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { prisma } from '@/lib/db';
+import { withDatabaseMetrics } from '@/lib/metrics';
 
 export type FreeUsageBucket = {
   limit: number;
@@ -119,20 +120,22 @@ export function isFreeTierConfigured() {
 }
 
 async function getUsageRows(userId: string, day: Date) {
-  const [userUsage, globalUsage] = await Promise.all([
-    prisma.$queryRaw<CountRow[]>`
-      SELECT "count"
-      FROM "UserDailyFreeUsage"
-      WHERE "userId" = ${userId} AND "day" = ${day}
-      LIMIT 1
-    `,
-    prisma.$queryRaw<CountRow[]>`
-      SELECT "count"
-      FROM "GlobalDailyFreeUsage"
-      WHERE "day" = ${day}
-      LIMIT 1
-    `
-  ]);
+  const [userUsage, globalUsage] = await withDatabaseMetrics('free_usage.read', () =>
+    Promise.all([
+      prisma.$queryRaw<CountRow[]>`
+        SELECT "count"
+        FROM "UserDailyFreeUsage"
+        WHERE "userId" = ${userId} AND "day" = ${day}
+        LIMIT 1
+      `,
+      prisma.$queryRaw<CountRow[]>`
+        SELECT "count"
+        FROM "GlobalDailyFreeUsage"
+        WHERE "day" = ${day}
+        LIMIT 1
+      `
+    ])
+  );
 
   return {
     userCount: userUsage[0]?.count ?? 0,
@@ -172,69 +175,71 @@ export async function reserveFreeRequest(userId: string): Promise<FreeUsageSnaps
 
   for (let attempt = 0; attempt < MAX_RESERVATION_RETRIES; attempt += 1) {
     try {
-      return await prisma.$transaction(
-        async (tx) => {
-          await tx.$executeRaw`
-            INSERT INTO "GlobalDailyFreeUsage" ("day", "count", "createdAt", "updatedAt")
-            VALUES (${day}, 0, NOW(), NOW())
-            ON CONFLICT ("day") DO NOTHING
-          `;
-          await tx.$executeRaw`
-            INSERT INTO "UserDailyFreeUsage" ("id", "userId", "day", "count", "createdAt", "updatedAt")
-            VALUES (${usageId}, ${userId}, ${day}, 0, NOW(), NOW())
-            ON CONFLICT ("userId", "day") DO NOTHING
-          `;
+      return await withDatabaseMetrics('free_usage.reserve', () =>
+        prisma.$transaction(
+          async (tx) => {
+            await tx.$executeRaw`
+              INSERT INTO "GlobalDailyFreeUsage" ("day", "count", "createdAt", "updatedAt")
+              VALUES (${day}, 0, NOW(), NOW())
+              ON CONFLICT ("day") DO NOTHING
+            `;
+            await tx.$executeRaw`
+              INSERT INTO "UserDailyFreeUsage" ("id", "userId", "day", "count", "createdAt", "updatedAt")
+              VALUES (${usageId}, ${userId}, ${day}, 0, NOW(), NOW())
+              ON CONFLICT ("userId", "day") DO NOTHING
+            `;
 
-          const [globalUsage] = await tx.$queryRaw<CountRow[]>`
-            SELECT "count"
-            FROM "GlobalDailyFreeUsage"
-            WHERE "day" = ${day}
-            FOR UPDATE
-          `;
-          if ((globalUsage?.count ?? 0) >= config.globalLimit) {
-            throw new FreeQuotaError(
-              'free_global_limit_reached',
-              'No global free API requests are left today. Connect your own API key to continue.'
+            const [globalUsage] = await tx.$queryRaw<CountRow[]>`
+              SELECT "count"
+              FROM "GlobalDailyFreeUsage"
+              WHERE "day" = ${day}
+              FOR UPDATE
+            `;
+            if ((globalUsage?.count ?? 0) >= config.globalLimit) {
+              throw new FreeQuotaError(
+                'free_global_limit_reached',
+                'No global free API requests are left today. Connect your own API key to continue.'
+              );
+            }
+
+            const [userUsage] = await tx.$queryRaw<CountRow[]>`
+              SELECT "count"
+              FROM "UserDailyFreeUsage"
+              WHERE "userId" = ${userId} AND "day" = ${day}
+              FOR UPDATE
+            `;
+            if ((userUsage?.count ?? 0) >= config.userLimit) {
+              throw new FreeQuotaError(
+                'free_user_limit_reached',
+                'Your free daily request limit is over. Connect your own API key to continue chatting.'
+              );
+            }
+
+            const [nextGlobal] = await tx.$queryRaw<CountRow[]>`
+              UPDATE "GlobalDailyFreeUsage"
+              SET "count" = "count" + 1, "updatedAt" = NOW()
+              WHERE "day" = ${day}
+              RETURNING "count"
+            `;
+            const [nextUser] = await tx.$queryRaw<CountRow[]>`
+              UPDATE "UserDailyFreeUsage"
+              SET "count" = "count" + 1, "updatedAt" = NOW()
+              WHERE "userId" = ${userId} AND "day" = ${day}
+              RETURNING "count"
+            `;
+
+            return buildStatus(
+              config.model,
+              config.userLimit,
+              config.globalLimit,
+              nextUser?.count ?? 0,
+              nextGlobal?.count ?? 0
             );
+          },
+          {
+            isolationLevel: 'Serializable'
           }
-
-          const [userUsage] = await tx.$queryRaw<CountRow[]>`
-            SELECT "count"
-            FROM "UserDailyFreeUsage"
-            WHERE "userId" = ${userId} AND "day" = ${day}
-            FOR UPDATE
-          `;
-          if ((userUsage?.count ?? 0) >= config.userLimit) {
-            throw new FreeQuotaError(
-              'free_user_limit_reached',
-              'Your free daily request limit is over. Connect your own API key to continue chatting.'
-            );
-          }
-
-          const [nextGlobal] = await tx.$queryRaw<CountRow[]>`
-            UPDATE "GlobalDailyFreeUsage"
-            SET "count" = "count" + 1, "updatedAt" = NOW()
-            WHERE "day" = ${day}
-            RETURNING "count"
-          `;
-          const [nextUser] = await tx.$queryRaw<CountRow[]>`
-            UPDATE "UserDailyFreeUsage"
-            SET "count" = "count" + 1, "updatedAt" = NOW()
-            WHERE "userId" = ${userId} AND "day" = ${day}
-            RETURNING "count"
-          `;
-
-          return buildStatus(
-            config.model,
-            config.userLimit,
-            config.globalLimit,
-            nextUser?.count ?? 0,
-            nextGlobal?.count ?? 0
-          );
-        },
-        {
-          isolationLevel: 'Serializable'
-        }
+        )
       );
     } catch (error) {
       if (error instanceof FreeQuotaError) {
@@ -260,31 +265,33 @@ export async function releaseFreeRequest(userId: string): Promise<FreeUsageSnaps
 
   const day = getQuotaDay();
 
-  return prisma.$transaction(
-    async (tx) => {
-      const [nextGlobal] = await tx.$queryRaw<CountRow[]>`
-        UPDATE "GlobalDailyFreeUsage"
-        SET "count" = GREATEST("count" - 1, 0), "updatedAt" = NOW()
-        WHERE "day" = ${day}
-        RETURNING "count"
-      `;
-      const [nextUser] = await tx.$queryRaw<CountRow[]>`
-        UPDATE "UserDailyFreeUsage"
-        SET "count" = GREATEST("count" - 1, 0), "updatedAt" = NOW()
-        WHERE "userId" = ${userId} AND "day" = ${day}
-        RETURNING "count"
-      `;
+  return withDatabaseMetrics('free_usage.release', () =>
+    prisma.$transaction(
+      async (tx) => {
+        const [nextGlobal] = await tx.$queryRaw<CountRow[]>`
+          UPDATE "GlobalDailyFreeUsage"
+          SET "count" = GREATEST("count" - 1, 0), "updatedAt" = NOW()
+          WHERE "day" = ${day}
+          RETURNING "count"
+        `;
+        const [nextUser] = await tx.$queryRaw<CountRow[]>`
+          UPDATE "UserDailyFreeUsage"
+          SET "count" = GREATEST("count" - 1, 0), "updatedAt" = NOW()
+          WHERE "userId" = ${userId} AND "day" = ${day}
+          RETURNING "count"
+        `;
 
-      return buildStatus(
-        config.model,
-        config.userLimit,
-        config.globalLimit,
-        nextUser?.count ?? 0,
-        nextGlobal?.count ?? 0
-      );
-    },
-    {
-      isolationLevel: 'Serializable'
-    }
+        return buildStatus(
+          config.model,
+          config.userLimit,
+          config.globalLimit,
+          nextUser?.count ?? 0,
+          nextGlobal?.count ?? 0
+        );
+      },
+      {
+        isolationLevel: 'Serializable'
+      }
+    )
   );
 }

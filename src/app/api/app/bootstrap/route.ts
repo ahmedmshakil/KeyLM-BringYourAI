@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import { DEMO_COOKIE, buildDemoUsageSnapshot } from '@/lib/demoSession';
 import { getFreeTierConfig, getFreeUsageStatus, isFreeTierConfigured } from '@/lib/freeTier';
 import { jsonResponse } from '@/lib/http';
+import { withApiMetrics } from '@/lib/metrics';
 import { toPublicUser } from '@/lib/userProfile';
 import { listThreads } from '@/lib/services/threadService';
 import { getRuntimeProvider } from '@/lib/services/threadRuntime';
@@ -49,7 +50,7 @@ function createEmptyModelsMeta(): ModelsMetaSummary {
   };
 }
 
-export async function GET() {
+export const GET = withApiMetrics('/api/app/bootstrap', 'GET', async () => {
   const cookieStore = await cookies();
   const demo = buildDemoUsageSnapshot({
     enabled: isFreeTierConfigured(),
@@ -148,4 +149,4 @@ export async function GET() {
     freeUsage,
     demo
   });
-}
+});

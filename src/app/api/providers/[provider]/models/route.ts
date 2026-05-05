@@ -3,38 +3,52 @@ import { requireUser } from '@/lib/auth';
 import { keyProviderSchema } from '@/lib/validators';
 import { getModels } from '@/lib/services/modelService';
 import { errorResponse, jsonResponse } from '@/lib/http';
+import { recordAppEvent, withApiMetrics } from '@/lib/metrics';
 
 function parseProvider(rawProvider: string) {
   const parsed = keyProviderSchema.safeParse(rawProvider);
   return parsed.success ? (parsed.data as Provider) : null;
 }
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ provider: string }> }
-) {
-  const user = await requireUser();
-  if (!user) {
-    return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
-  }
-  const { provider: rawProvider } = await params;
-  const provider = parseProvider(rawProvider);
-  if (!provider) {
-    return errorResponse({ code: 'invalid_provider', message: 'Unsupported provider' }, 400);
-  }
-  const url = new URL(request.url);
-  const refresh = url.searchParams.get('refresh') === 'true';
-  try {
-    const result = await getModels(user.id, provider, refresh);
-    return jsonResponse({
-      models: result.models,
-      stale: result.stale,
-      fetchedAt: result.fetchedAt
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message === 'No active key') {
-      return errorResponse({ code: 'key_missing', message: 'Connect a key first' }, 400);
+export const GET = withApiMetrics(
+  '/api/providers/[provider]/models',
+  'GET',
+  async (request: Request, { params }: { params: Promise<{ provider: string }> }) => {
+    const user = await requireUser();
+    if (!user) {
+      return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
     }
-    return errorResponse({ code: 'models_unavailable', message: 'Failed to load models' }, 502);
+    const { provider: rawProvider } = await params;
+    const provider = parseProvider(rawProvider);
+    if (!provider) {
+      return errorResponse({ code: 'invalid_provider', message: 'Unsupported provider' }, 400);
+    }
+    const url = new URL(request.url);
+    const refresh = url.searchParams.get('refresh') === 'true';
+    if (refresh) {
+      recordAppEvent('provider_model_refresh', 'started');
+    }
+    try {
+      const result = await getModels(user.id, provider, refresh);
+      if (refresh) {
+        recordAppEvent('provider_model_refresh', 'success');
+      }
+      return jsonResponse({
+        models: result.models,
+        stale: result.stale,
+        fetchedAt: result.fetchedAt
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'No active key') {
+        if (refresh) {
+          recordAppEvent('provider_model_refresh', 'key_missing');
+        }
+        return errorResponse({ code: 'key_missing', message: 'Connect a key first' }, 400);
+      }
+      if (refresh) {
+        recordAppEvent('provider_model_refresh', 'failure');
+      }
+      return errorResponse({ code: 'models_unavailable', message: 'Failed to load models' }, 502);
+    }
   }
-}
+);

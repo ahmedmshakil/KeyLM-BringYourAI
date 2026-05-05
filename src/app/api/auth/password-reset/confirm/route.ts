@@ -6,6 +6,7 @@ import { errorResponse, getClientIp, jsonResponse } from '@/lib/http';
 import { hashPasswordResetToken } from '@/lib/passwordReset';
 import { authPasswordSchema } from '@/lib/validators';
 import { takeToken } from '@/lib/rateLimit';
+import { recordAuthEvent, withApiMetrics } from '@/lib/metrics';
 
 const confirmSchema = z.object({
   token: z.string().trim().min(32).max(256),
@@ -15,7 +16,9 @@ const confirmSchema = z.object({
 const PASSWORD_RESET_CONFIRM_LIMIT = 10;
 const PASSWORD_RESET_WINDOW_MS = 15 * 60_000;
 
-export async function POST(request: Request) {
+export const POST = withApiMetrics('/api/auth/password-reset/confirm', 'POST', async (request: Request) => {
+  recordAuthEvent('password_reset_confirm', 'started');
+
   try {
     const body = confirmSchema.parse(await request.json());
     const sessionVersionEnabled = await supportsSessionVersion();
@@ -27,6 +30,7 @@ export async function POST(request: Request) {
       PASSWORD_RESET_WINDOW_MS
     );
     if (!allowed) {
+      recordAuthEvent('password_reset_confirm', 'rate_limited');
       return errorResponse({ code: 'rate_limited', message: 'Too many reset attempts. Try again soon.' }, 429);
     }
 
@@ -38,6 +42,7 @@ export async function POST(request: Request) {
       }
     });
     if (!reset) {
+      recordAuthEvent('password_reset_confirm', 'failure');
       return errorResponse({ code: 'invalid_token', message: 'Reset token is invalid or expired.' }, 400);
     }
     const passwordHash = await bcrypt.hash(body.password, 10);
@@ -65,8 +70,10 @@ export async function POST(request: Request) {
         data: { usedAt: new Date() }
       });
     });
+    recordAuthEvent('password_reset_confirm', 'success');
     return jsonResponse({ ok: true });
   } catch (error) {
+    recordAuthEvent('password_reset_confirm', 'failure');
     return errorResponse({ code: 'invalid_request', message: 'Invalid request' }, 400);
   }
-}
+});

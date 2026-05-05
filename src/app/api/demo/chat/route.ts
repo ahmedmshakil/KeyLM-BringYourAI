@@ -4,11 +4,13 @@ import { setDemoCookie } from '@/lib/cookies';
 import { DEMO_COOKIE, DEMO_MESSAGE_LIMIT, buildDemoUsageSnapshot, signDemoSession } from '@/lib/demoSession';
 import { getFreeTierConfig, isFreeTierConfigured } from '@/lib/freeTier';
 import { getClientIp, jsonResponse } from '@/lib/http';
+import { recordAppEvent, withApiMetrics } from '@/lib/metrics';
 import { getProviderAdapter } from '@/lib/providers';
 import { takeToken } from '@/lib/rateLimit';
 import { demoChatSchema } from '@/lib/validators';
 
-export async function POST(request: Request) {
+export const POST = withApiMetrics('/api/demo/chat', 'POST', async (request: Request) => {
+  recordAppEvent('demo_chat_request', 'started');
   const config = getFreeTierConfig();
   const demoEnabled = isFreeTierConfigured();
   const cookieStore = await cookies();
@@ -21,6 +23,7 @@ export async function POST(request: Request) {
   });
 
   if (!demo.enabled) {
+    recordAppEvent('demo_chat_request', 'disabled');
     return Response.json(
       {
         error: {
@@ -34,6 +37,7 @@ export async function POST(request: Request) {
   }
 
   if (!(await takeToken(`demo:${getClientIp(request)}`, 20, 60_000))) {
+    recordAppEvent('demo_chat_request', 'rate_limited');
     return Response.json(
       {
         error: {
@@ -51,6 +55,7 @@ export async function POST(request: Request) {
   try {
     body = demoChatSchema.parse(await request.json());
   } catch {
+    recordAppEvent('demo_chat_request', 'invalid_request');
     return Response.json(
       {
         error: { code: 'invalid_request', message: 'Invalid demo request.' },
@@ -62,6 +67,7 @@ export async function POST(request: Request) {
 
   const lastMessage = body.messages.at(-1);
   if (!lastMessage || lastMessage.role !== 'user') {
+    recordAppEvent('demo_chat_request', 'invalid_request');
     return Response.json(
       {
         error: { code: 'invalid_request', message: 'The last demo message must come from the user.' },
@@ -72,6 +78,7 @@ export async function POST(request: Request) {
   }
 
   if (demo.exhausted) {
+    recordAppEvent('demo_chat_request', 'limit_reached');
     return Response.json(
       {
         error: {
@@ -90,6 +97,7 @@ export async function POST(request: Request) {
     const nextToken = signDemoSession(demo.used + 1, demo.limit);
     await setDemoCookie(nextToken);
 
+    recordAppEvent('demo_chat_request', 'success');
     return jsonResponse({
       message: {
         id: `demo-${crypto.randomUUID()}`,
@@ -106,6 +114,7 @@ export async function POST(request: Request) {
       })
     });
   } catch (error) {
+    recordAppEvent('demo_chat_request', 'provider_error');
     return Response.json(
       {
         error: {
@@ -117,4 +126,4 @@ export async function POST(request: Request) {
       { status: 502 }
     );
   }
-}
+});

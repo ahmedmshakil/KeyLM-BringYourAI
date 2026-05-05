@@ -6,6 +6,7 @@ import { requireUser } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { supportsUserProfileFields } from '@/lib/dbCompat';
 import { errorResponse, jsonResponse } from '@/lib/http';
+import { withApiMetrics } from '@/lib/metrics';
 import {
   ALLOWED_PROFILE_IMAGE_TYPES,
   PROFILE_IMAGE_MAX_BYTES,
@@ -61,16 +62,16 @@ async function saveProfileImage(userId: string, file: File) {
   };
 }
 
-export async function GET() {
+export const GET = withApiMetrics('/api/settings/profile', 'GET', async () => {
   const user = await requireUser();
   if (!user) {
     return errorResponse({ code: 'unauthorized', message: 'You must be signed in to view settings.' }, 401);
   }
 
   return jsonResponse({ user: toPublicUser(user) });
-}
+});
 
-export async function POST(request: Request) {
+export const POST = withApiMetrics('/api/settings/profile', 'POST', async (request: Request) => {
   const user = await requireUser();
   if (!user) {
     return errorResponse({ code: 'unauthorized', message: 'You must be signed in to update settings.' }, 401);
@@ -169,4 +170,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return errorResponse({ code: 'invalid_request', message: 'Unable to save your profile settings.' }, 400);
   }
-}
+});

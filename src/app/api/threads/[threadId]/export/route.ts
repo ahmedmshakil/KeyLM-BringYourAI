@@ -7,6 +7,7 @@ import {
   renderThreadPrintHtml
 } from '@/lib/services/threadExport';
 import { getThread } from '@/lib/services/threadService';
+import { recordAppEvent, withApiMetrics } from '@/lib/metrics';
 
 type ExportFormat = 'json' | 'pdf';
 
@@ -18,46 +19,52 @@ function getExportFormat(value: string | null): ExportFormat | null {
   return null;
 }
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ threadId: string }> }
-) {
-  const user = await requireUser();
-  if (!user) {
-    return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
-  }
+export const GET = withApiMetrics(
+  '/api/threads/[threadId]/export',
+  'GET',
+  async (request: Request, { params }: { params: Promise<{ threadId: string }> }) => {
+    const user = await requireUser();
+    if (!user) {
+      return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
+    }
+    recordAppEvent('thread_export', 'started');
 
-  const format = getExportFormat(new URL(request.url).searchParams.get('format'));
-  if (!format) {
-    return errorResponse(
-      { code: 'invalid_request', message: 'Invalid export format. Use json or pdf.' },
-      400
-    );
-  }
+    const format = getExportFormat(new URL(request.url).searchParams.get('format'));
+    if (!format) {
+      recordAppEvent('thread_export', 'invalid_request');
+      return errorResponse(
+        { code: 'invalid_request', message: 'Invalid export format. Use json or pdf.' },
+        400
+      );
+    }
 
-  const { threadId } = await params;
-  const thread = await getThread(user.id, threadId);
-  if (!thread) {
-    return errorResponse({ code: 'not_found', message: 'Thread not found' }, 404);
-  }
+    const { threadId } = await params;
+    const thread = await getThread(user.id, threadId);
+    if (!thread) {
+      recordAppEvent('thread_export', 'not_found');
+      return errorResponse({ code: 'not_found', message: 'Thread not found' }, 404);
+    }
 
-  const exportData = buildThreadExportData(thread);
+    const exportData = buildThreadExportData(thread);
 
-  if (format === 'json') {
-    return new Response(renderThreadJson(exportData), {
+    if (format === 'json') {
+      recordAppEvent('thread_export', 'success');
+      return new Response(renderThreadJson(exportData), {
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${buildExportFilename(exportData, format)}"`,
+          'Cache-Control': 'no-store'
+        }
+      });
+    }
+
+    recordAppEvent('thread_export', 'success');
+    return new Response(renderThreadPrintHtml(exportData), {
       headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${buildExportFilename(exportData, format)}"`,
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Disposition': `inline; filename="${buildExportFilename(exportData, format)}"`,
         'Cache-Control': 'no-store'
       }
     });
   }
-
-  return new Response(renderThreadPrintHtml(exportData), {
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Content-Disposition': `inline; filename="${buildExportFilename(exportData, format)}"`,
-      'Cache-Control': 'no-store'
-    }
-  });
-}
+);

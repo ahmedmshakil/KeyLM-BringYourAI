@@ -4,6 +4,7 @@ import { errorResponse, getClientIp, jsonResponse } from '@/lib/http';
 import { createPasswordResetToken } from '@/lib/passwordReset';
 import { takeToken } from '@/lib/rateLimit';
 import { authEmailSchema, normalizeEmail } from '@/lib/validators';
+import { recordAuthEvent, withApiMetrics } from '@/lib/metrics';
 
 const requestSchema = z.object({
   email: authEmailSchema
@@ -22,7 +23,9 @@ function buildResetUrl(request: Request, token: string): string {
   return `${base}/reset?token=${token}`;
 }
 
-export async function POST(request: Request) {
+export const POST = withApiMetrics('/api/auth/password-reset/request', 'POST', async (request: Request) => {
+  recordAuthEvent('password_reset_request', 'started');
+
   try {
     const body = requestSchema.parse(await request.json());
     const email = normalizeEmail(body.email);
@@ -33,6 +36,7 @@ export async function POST(request: Request) {
       PASSWORD_RESET_WINDOW_MS
     );
     if (!allowed) {
+      recordAuthEvent('password_reset_request', 'rate_limited');
       return errorResponse({ code: 'rate_limited', message: 'Too many reset attempts. Try again soon.' }, 429);
     }
     const user = await prisma.user.findUnique({
@@ -40,6 +44,7 @@ export async function POST(request: Request) {
       select: { id: true, email: true }
     });
     if (!user) {
+      recordAuthEvent('password_reset_request', 'success');
       return jsonResponse({ ok: true });
     }
     await prisma.passwordResetToken.deleteMany({
@@ -54,13 +59,16 @@ export async function POST(request: Request) {
       }
     });
     if (process.env.NODE_ENV !== 'production') {
+      recordAuthEvent('password_reset_request', 'success');
       return jsonResponse({
         ok: true,
         resetUrl: buildResetUrl(request, token.token)
       });
     }
+    recordAuthEvent('password_reset_request', 'success');
     return jsonResponse({ ok: true });
   } catch (error) {
+    recordAuthEvent('password_reset_request', 'failure');
     return errorResponse({ code: 'invalid_request', message: 'Invalid request' }, 400);
   }
-}
+});

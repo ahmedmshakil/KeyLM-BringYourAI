@@ -1,8 +1,9 @@
 import { requireUser } from '@/lib/auth';
 import { errorResponse, jsonResponse } from '@/lib/http';
+import { withApiMetrics } from '@/lib/metrics';
 import { getUsageDashboard } from '@/lib/services/usageDashboardService';
 
-export async function GET() {
+export const GET = withApiMetrics('/api/usage/dashboard', 'GET', async () => {
   const user = await requireUser();
   if (!user) {
     return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
@@ -20,4 +21,4 @@ export async function GET() {
       500
     );
   }
-}
+});

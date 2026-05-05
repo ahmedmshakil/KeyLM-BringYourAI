@@ -7,6 +7,7 @@ import { signSession } from '@/lib/session';
 import { normalizeEmail } from '@/lib/validators';
 import { toPublicUser, type PublicUser } from '@/lib/userProfile';
 import { createClient as createSupabaseServerClient } from '@/utils/supabase/server';
+import { recordSupabaseAuthRequest, withDatabaseMetrics } from '@/lib/metrics';
 
 export type PasswordlessMethod = 'magic_link' | 'otp';
 export type PasswordlessIntent = 'login' | 'register';
@@ -109,6 +110,7 @@ export async function sendPasswordlessEmail({
   });
 
   if (error) {
+    recordSupabaseAuthRequest('passwordless_send', 'failure');
     const isMissingAccount = error.message.toLowerCase().includes('signup') || error.status === 422;
     throw new PasswordlessAuthError(
       isMissingAccount ? 'account_not_found' : 'passwordless_send_failed',
@@ -118,6 +120,8 @@ export async function sendPasswordlessEmail({
       isMissingAccount ? 404 : error.status || 400
     );
   }
+
+  recordSupabaseAuthRequest('passwordless_send', 'success');
 }
 
 export async function createAppSessionForSupabaseUser(supabaseUser: SupabaseUser): Promise<PublicUser> {
@@ -138,33 +142,39 @@ export async function createAppSessionForSupabaseUser(supabaseUser: SupabaseUser
     ...(profileFieldsEnabled ? { fullName: true, profileImageUrl: true } : {})
   };
 
-  const linkedUser = await prisma.user.findUnique({
-    where: { supabaseUserId: supabaseUser.id },
-    select
-  });
+  const linkedUser = await withDatabaseMetrics('auth.supabase_user_lookup', () =>
+    prisma.user.findUnique({
+      where: { supabaseUserId: supabaseUser.id },
+      select
+    })
+  );
 
   const user = linkedUser
-    ? await prisma.user.update({
-        where: { id: linkedUser.id },
-        data: {
-          email,
-          lastLoginAt: now
-        },
-        select
-      })
-    : await prisma.user.upsert({
-        where: { email },
-        update: {
-          supabaseUserId: supabaseUser.id,
-          lastLoginAt: now
-        },
-        create: {
-          email,
-          supabaseUserId: supabaseUser.id,
-          lastLoginAt: now
-        },
-        select
-      });
+    ? await withDatabaseMetrics('auth.user_update_after_login', () =>
+        prisma.user.update({
+          where: { id: linkedUser.id },
+          data: {
+            email,
+            lastLoginAt: now
+          },
+          select
+        })
+      )
+    : await withDatabaseMetrics('auth.user_upsert_after_login', () =>
+        prisma.user.upsert({
+          where: { email },
+          update: {
+            supabaseUserId: supabaseUser.id,
+            lastLoginAt: now
+          },
+          create: {
+            email,
+            supabaseUserId: supabaseUser.id,
+            lastLoginAt: now
+          },
+          select
+        })
+      );
 
   const sessionVersion =
     sessionVersionEnabled && 'sessionVersion' in user && typeof user.sessionVersion === 'number'

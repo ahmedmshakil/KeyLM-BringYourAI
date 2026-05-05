@@ -7,6 +7,7 @@ import {
 } from '@/lib/passwordlessAuth';
 import { takeToken } from '@/lib/rateLimit';
 import { authCaptchaTokenSchema, authEmailSchema, normalizeEmail, passwordlessMethodSchema } from '@/lib/validators';
+import { recordAuthEvent, withApiMetrics } from '@/lib/metrics';
 
 const registerSchema = z.object({
   email: authEmailSchema,
@@ -17,7 +18,9 @@ const registerSchema = z.object({
 const REGISTER_RATE_LIMIT = 5;
 const AUTH_WINDOW_MS = 15 * 60_000;
 
-export async function POST(request: Request) {
+export const POST = withApiMetrics('/api/auth/register', 'POST', async (request: Request) => {
+  recordAuthEvent('register_request', 'started');
+
   try {
     const body = registerSchema.parse(await request.json());
     const email = normalizeEmail(body.email);
@@ -25,6 +28,7 @@ export async function POST(request: Request) {
     const allowed = await takeToken(`auth:register:${clientIp}:${email}`, REGISTER_RATE_LIMIT, AUTH_WINDOW_MS);
 
     if (!allowed) {
+      recordAuthEvent('register_request', 'rate_limited');
       return errorResponse({ code: 'rate_limited', message: 'Too many registration attempts. Try again soon.' }, 429);
     }
 
@@ -36,6 +40,7 @@ export async function POST(request: Request) {
       request
     });
 
+    recordAuthEvent('register_request', 'success');
     return jsonResponse(
       {
         ok: true,
@@ -45,10 +50,12 @@ export async function POST(request: Request) {
       { status: 202 }
     );
   } catch (error) {
+    recordAuthEvent('register_request', 'failure');
+
     if (error instanceof PasswordlessAuthError) {
       return errorResponse({ code: error.code, message: error.message }, error.status);
     }
 
     return errorResponse({ code: 'captcha_required', message: 'Captcha verification required' }, 400);
   }
-}
+});

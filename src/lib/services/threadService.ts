@@ -1,5 +1,6 @@
 import { Provider, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
+import { withDatabaseMetrics } from '@/lib/metrics';
 
 export async function createThread(
   userId: string,
@@ -8,40 +9,48 @@ export async function createThread(
   systemPrompt?: string,
   settings?: Record<string, unknown>
 ) {
-  return prisma.thread.create({
-    data: {
-      userId,
-      provider,
-      model,
-      systemPrompt: systemPrompt || null,
-      settings: settings ? (settings as Prisma.InputJsonValue) : undefined
-    }
-  });
+  return withDatabaseMetrics('thread.create', () =>
+    prisma.thread.create({
+      data: {
+        userId,
+        provider,
+        model,
+        systemPrompt: systemPrompt || null,
+        settings: settings ? (settings as Prisma.InputJsonValue) : undefined
+      }
+    })
+  );
 }
 
 export async function listThreads(userId: string) {
-  return prisma.thread.findMany({
-    where: { userId },
-    orderBy: { updatedAt: 'desc' },
-    include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } }
-  });
+  return withDatabaseMetrics('thread.list', () =>
+    prisma.thread.findMany({
+      where: { userId },
+      orderBy: { updatedAt: 'desc' },
+      include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } }
+    })
+  );
 }
 
 export async function getThread(userId: string, threadId: string) {
-  return prisma.thread.findFirst({
-    where: { id: threadId, userId },
-    include: { messages: { orderBy: { createdAt: 'asc' } } }
-  });
+  return withDatabaseMetrics('thread.get', () =>
+    prisma.thread.findFirst({
+      where: { id: threadId, userId },
+      include: { messages: { orderBy: { createdAt: 'asc' } } }
+    })
+  );
 }
 
 export async function deleteThread(userId: string, threadId: string) {
-  const thread = await prisma.thread.findFirst({ where: { id: threadId, userId } });
-  if (!thread) {
-    throw new Error('Thread not found');
-  }
-  await prisma.message.deleteMany({ where: { threadId } });
-  await prisma.thread.delete({ where: { id: thread.id } });
-  return thread;
+  return withDatabaseMetrics('thread.delete', async () => {
+    const thread = await prisma.thread.findFirst({ where: { id: threadId, userId } });
+    if (!thread) {
+      throw new Error('Thread not found');
+    }
+    await prisma.message.deleteMany({ where: { threadId } });
+    await prisma.thread.delete({ where: { id: thread.id } });
+    return thread;
+  });
 }
 
 export async function appendMessage(
@@ -52,28 +61,32 @@ export async function appendMessage(
   metadata?: Record<string, unknown>
 ) {
   try {
-    return await prisma.message.create({
-      data: {
-        threadId,
-        role,
-        content,
-        clientRequestId,
-        metadata: metadata ? (metadata as Prisma.InputJsonValue) : undefined
-      }
-    });
+    return await withDatabaseMetrics('message.create', () =>
+      prisma.message.create({
+        data: {
+          threadId,
+          role,
+          content,
+          clientRequestId,
+          metadata: metadata ? (metadata as Prisma.InputJsonValue) : undefined
+        }
+      })
+    );
   } catch (error) {
     if (
       clientRequestId &&
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === 'P2002'
     ) {
-      const existing = await prisma.message.findFirst({
-        where: {
-          threadId,
-          clientRequestId,
-          role
-        }
-      });
+      const existing = await withDatabaseMetrics('message.find_duplicate', () =>
+        prisma.message.findFirst({
+          where: {
+            threadId,
+            clientRequestId,
+            role
+          }
+        })
+      );
       if (existing) {
         return existing;
       }
@@ -84,12 +97,16 @@ export async function appendMessage(
 }
 
 export async function findMessageByRequestId(threadId: string, requestId: string) {
-  return prisma.message.findFirst({ where: { threadId, clientRequestId: requestId, role: 'assistant' } });
+  return withDatabaseMetrics('message.find_by_request_id', () =>
+    prisma.message.findFirst({ where: { threadId, clientRequestId: requestId, role: 'assistant' } })
+  );
 }
 
 export async function findMessagesByRequestId(threadId: string, requestId: string) {
-  return prisma.message.findMany({
-    where: { threadId, clientRequestId: requestId },
-    orderBy: { createdAt: 'asc' }
-  });
+  return withDatabaseMetrics('message.find_many_by_request_id', () =>
+    prisma.message.findMany({
+      where: { threadId, clientRequestId: requestId },
+      orderBy: { createdAt: 'asc' }
+    })
+  );
 }

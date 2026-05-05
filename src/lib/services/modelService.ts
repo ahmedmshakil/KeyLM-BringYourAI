@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { getProviderAdapter } from '@/lib/providers';
 import { decryptSecret } from '@/lib/crypto';
 import { NormalizedModel } from '@/lib/providers/types';
+import { withDatabaseMetrics } from '@/lib/metrics';
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -21,18 +22,22 @@ function filterModels(provider: Provider, models: NormalizedModel[]) {
 }
 
 export async function getModels(userId: string, provider: Provider, refresh = false) {
-  const key = await prisma.providerKey.findFirst({
-    where: { userId, provider, status: 'active' },
-    orderBy: { lastValidatedAt: 'desc' }
-  });
+  const key = await withDatabaseMetrics('provider_model.active_key_lookup', () =>
+    prisma.providerKey.findFirst({
+      where: { userId, provider, status: 'active' },
+      orderBy: { lastValidatedAt: 'desc' }
+    })
+  );
   if (!key) {
     throw new Error('No active key');
   }
 
   const now = new Date();
-  const cache = await prisma.providerModelCache.findFirst({
-    where: { userId, provider, keyId: key.id }
-  });
+  const cache = await withDatabaseMetrics('provider_model.cache_lookup', () =>
+    prisma.providerModelCache.findFirst({
+      where: { userId, provider, keyId: key.id }
+    })
+  );
 
   const isExpired = cache ? cache.expiresAt.getTime() <= now.getTime() : true;
   if (!refresh && cache && !isExpired) {
@@ -52,14 +57,18 @@ export async function getModels(userId: string, provider: Provider, refresh = fa
     const expiresAt = new Date(fetchedAt.getTime() + CACHE_TTL_MS);
 
     if (cache) {
-      await prisma.providerModelCache.update({
-        where: { id: cache.id },
-        data: { models, fetchedAt, expiresAt }
-      });
+      await withDatabaseMetrics('provider_model.cache_update', () =>
+        prisma.providerModelCache.update({
+          where: { id: cache.id },
+          data: { models, fetchedAt, expiresAt }
+        })
+      );
     } else {
-      await prisma.providerModelCache.create({
-        data: { userId, provider, keyId: key.id, models, fetchedAt, expiresAt }
-      });
+      await withDatabaseMetrics('provider_model.cache_create', () =>
+        prisma.providerModelCache.create({
+          data: { userId, provider, keyId: key.id, models, fetchedAt, expiresAt }
+        })
+      );
     }
 
     return { models, stale: false, fetchedAt };
