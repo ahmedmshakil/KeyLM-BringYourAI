@@ -119,6 +119,7 @@ type UsageGrain = 'day' | 'week';
 type FreeUsageInfo = {
   provider: 'groq';
   model: string;
+  models: string[];
   user: {
     limit: number;
     used: number;
@@ -176,7 +177,7 @@ const createEmptyModelsMeta = (): Record<KeyProviderId, { stale: boolean; fetche
 
 const createDefaultDemoUsage = (): DemoUsageInfo => ({
   enabled: false,
-  model: 'moonshotai/kimi-k2-instruct-0905',
+  model: 'openai/gpt-oss-120b',
   limit: 3,
   used: 0,
   remaining: 3,
@@ -325,6 +326,7 @@ function AppPageClient() {
   const [streaming, setStreaming] = useState(false);
   const [isDark, setIsDark] = useState(false);
   const [freeUsage, setFreeUsage] = useState<FreeUsageInfo | null>(null);
+  const [selectedFreeModel, setSelectedFreeModel] = useState<string>('');
   const [demoUsage, setDemoUsage] = useState<DemoUsageInfo>(createDefaultDemoUsage());
   const [demoMessages, setDemoMessages] = useState<MessageInfo[]>([]);
   const [demoLimitModalOpen, setDemoLimitModalOpen] = useState(false);
@@ -555,6 +557,11 @@ function AppPageClient() {
     setModelsMeta(payload.modelsMeta);
     setThreads(payload.threads);
     setFreeUsage(payload.freeUsage);
+    if (payload.freeUsage?.models?.length) {
+      setSelectedFreeModel((prev) =>
+        prev && payload.freeUsage!.models.includes(prev) ? prev : payload.freeUsage!.model
+      );
+    }
 
     const nextConnectedProviders = KEY_PROVIDERS.filter((provider) =>
       payload.providers[provider.id].some((key) => key.status === 'active')
@@ -1015,7 +1022,8 @@ function AppPageClient() {
         const res = await apiJson<{ thread: ThreadDetail }>('/api/threads', {
           method: 'POST',
           body: JSON.stringify({
-            mode: 'free'
+            mode: 'free',
+            model: selectedFreeModel || undefined
           })
         });
         const created = res.thread;
@@ -1062,6 +1070,8 @@ function AppPageClient() {
       if (res.thread.provider !== 'groq') {
         setCurrentProvider(res.thread.provider);
         setSelectedModel(res.thread.model);
+      } else {
+        setSelectedFreeModel(res.thread.model);
       }
     } catch (error) {
       setNotice('Failed to load thread.');
@@ -1630,10 +1640,17 @@ function AppPageClient() {
           ) : shouldShowFreeSource ? (
             <div className="free-source-banner">
               <span className="badge glow">KeyLM Free</span>
-              <div>
-                <strong>{freeUsage?.model ?? activeThread?.model ?? 'moonshotai/kimi-k2-instruct-0905'}</strong>
-                {/* <p>Shared Groq pool. Connect your own key for stronger quality or when free quota runs out.</p> */}
-              </div>
+              <select
+                className="select"
+                value={selectedFreeModel || freeUsage?.model || ''}
+                onChange={(e) => setSelectedFreeModel(e.target.value)}
+              >
+                {(freeUsage?.models ?? []).map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </select>
             </div>
           ) : connectedProviders.length === 0 ? (
             <div className="free-source-banner free-source-banner-muted">

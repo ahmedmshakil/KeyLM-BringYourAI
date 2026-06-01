@@ -18,6 +18,7 @@ export type FreeUsageStatus =
 export type FreeUsageSnapshot = {
   provider: 'groq';
   model: string;
+  models: string[];
   user: FreeUsageBucket;
   global: FreeUsageBucket;
   status: FreeUsageStatus;
@@ -34,7 +35,13 @@ export class FreeQuotaError extends Error {
 }
 
 const DEFAULT_BASE_URL = 'https://api.groq.com/openai/v1';
-const DEFAULT_MODEL = 'moonshotai/kimi-k2-instruct-0905';
+const FREE_MODELS = [
+  'openai/gpt-oss-120b',
+  'moonshotai/kimi-k2-instruct-0905',
+  'groq/compound',
+  'qwen/qwen3-32b'
+];
+const DEFAULT_MODEL = FREE_MODELS[0];
 const DEFAULT_FALLBACK_MODELS = ['llama-3.1-8b-instant'];
 const DEFAULT_USER_LIMIT = 50;
 const DEFAULT_GLOBAL_LIMIT = 1000;
@@ -87,6 +94,7 @@ function buildStatus(
   return {
     provider: 'groq',
     model,
+    models: FREE_MODELS,
     user,
     global,
     status,
@@ -98,6 +106,14 @@ type CountRow = {
   count: number;
 };
 
+export function getFreeModels(): string[] {
+  return [...FREE_MODELS];
+}
+
+export function isValidFreeModel(model: string): boolean {
+  return FREE_MODELS.includes(model);
+}
+
 export function getFreeTierConfig() {
   const fallbackModels = (process.env.GROQ_FREE_FALLBACK_MODELS ?? DEFAULT_FALLBACK_MODELS.join(','))
     .split(',')
@@ -108,6 +124,7 @@ export function getFreeTierConfig() {
     apiKey: process.env.GROQ_API_KEY?.trim() ?? '',
     baseUrl: (process.env.GROQ_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/$/, ''),
     model: process.env.GROQ_FREE_MODEL?.trim() || DEFAULT_MODEL,
+    models: FREE_MODELS,
     fallbackModels,
     userLimit: parseLimit(process.env.FREE_USER_DAILY_LIMIT, DEFAULT_USER_LIMIT),
     globalLimit: parseLimit(process.env.FREE_GLOBAL_DAILY_LIMIT, DEFAULT_GLOBAL_LIMIT)

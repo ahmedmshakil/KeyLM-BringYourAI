@@ -3,7 +3,7 @@ import { requireUser } from '@/lib/auth';
 import { threadCreateSchema } from '@/lib/validators';
 import { createThread, listThreads } from '@/lib/services/threadService';
 import { getActiveKey } from '@/lib/services/keyService';
-import { getFreeTierConfig, getFreeUsageStatus } from '@/lib/freeTier';
+import { getFreeTierConfig, getFreeUsageStatus, isValidFreeModel } from '@/lib/freeTier';
 import { errorResponse, jsonResponse } from '@/lib/http';
 import { recordAppEvent, withApiMetrics } from '@/lib/metrics';
 import { toThreadDetailDto } from '@/lib/services/threadDtos';
@@ -49,10 +49,11 @@ export const POST = withApiMetrics('/api/threads', 'POST', async (request: Reque
       }
 
       const config = getFreeTierConfig();
+      const chosenModel = body.model && isValidFreeModel(body.model) ? body.model : config.model;
       const thread = await createThread(
         user.id,
         'groq' as Provider,
-        config.model,
+        chosenModel,
         body.systemPrompt,
         buildThreadSettings(body.settings, 'groq')
       );

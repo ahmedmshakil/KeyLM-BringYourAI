@@ -11,7 +11,7 @@ import { buildChatMessages } from '@/lib/services/chatService';
 import { sseResponse } from '@/lib/streaming';
 import { takeToken } from '@/lib/rateLimit';
 import { prisma } from '@/lib/db';
-import { FreeQuotaError, getFreeTierConfig, releaseFreeRequest, reserveFreeRequest } from '@/lib/freeTier';
+import { FreeQuotaError, getFreeTierConfig, isValidFreeModel, releaseFreeRequest, reserveFreeRequest } from '@/lib/freeTier';
 import { toMessageDto } from '@/lib/services/threadDtos';
 import { UsageInfo } from '@/lib/providers/types';
 import { getRuntimeProvider } from '@/lib/services/threadRuntime';
@@ -80,9 +80,11 @@ export const POST = withApiMetrics(
     let freeRequestReserved = false;
     if (runtimeProvider === 'groq') {
       try {
-        const { apiKey, model } = getFreeTierConfig();
-        rawKey = apiKey;
-        runtimeModel = model;
+        const config = getFreeTierConfig();
+        rawKey = config.apiKey;
+        // Use the thread's stored model (user's choice at creation time),
+        // falling back to config default if the model is no longer valid
+        runtimeModel = isValidFreeModel(thread.model) ? thread.model : config.model;
         await reserveFreeRequest(user.id);
         freeRequestReserved = true;
       } catch (error) {

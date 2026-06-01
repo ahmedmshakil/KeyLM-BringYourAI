@@ -35,6 +35,7 @@ const byokThreadCreateSchema = z.object({
 
 const freeThreadCreateSchema = z.object({
   mode: z.literal('free'),
+  model: z.string().trim().min(1).max(200).optional(),
   systemPrompt: z.string().trim().max(8_000).optional(),
   settings: threadSettingsSchema
 });
