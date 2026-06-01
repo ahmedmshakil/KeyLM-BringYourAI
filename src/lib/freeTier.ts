@@ -237,7 +237,7 @@ export async function reserveFreeRequest(userId: string): Promise<FreeUsageSnaps
             );
           },
           {
-            isolationLevel: 'Serializable'
+            isolationLevel: 'ReadCommitted'
           }
         )
       );
@@ -290,7 +290,7 @@ export async function releaseFreeRequest(userId: string): Promise<FreeUsageSnaps
         );
       },
       {
-        isolationLevel: 'Serializable'
+        isolationLevel: 'ReadCommitted'
       }
     )
   );

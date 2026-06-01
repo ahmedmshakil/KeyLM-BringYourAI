@@ -8,9 +8,7 @@ const globalForSchemaCompat = globalThis as unknown as {
 
 const schemaSupportCache = globalForSchemaCompat.schemaSupportCache ?? new Map<string, boolean>();
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForSchemaCompat.schemaSupportCache = schemaSupportCache;
-}
+globalForSchemaCompat.schemaSupportCache = schemaSupportCache;
 
 async function readExists(query: Promise<Array<{ exists: boolean }>>) {
   try {

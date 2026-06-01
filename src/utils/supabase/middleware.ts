@@ -1,47 +1,13 @@
-import { createServerClient } from '@supabase/ssr';
 import { type NextRequest, NextResponse } from 'next/server';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabasePublishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
+/**
+ * Middleware pass-through — session validation happens in route handlers
+ * via requireUser() (local JWT/HMAC check). No network round-trip needed.
+ */
 export async function updateSession(request: NextRequest) {
-  if (!supabaseUrl || !supabasePublishableKey) {
-    return NextResponse.next({
-      request: {
-        headers: request.headers
-      }
-    });
-  }
-
-  let supabaseResponse = NextResponse.next({
+  return NextResponse.next({
     request: {
       headers: request.headers
     }
   });
-
-  const supabase = createServerClient(supabaseUrl, supabasePublishableKey, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value }) => {
-          request.cookies.set(name, value);
-        });
-
-        supabaseResponse = NextResponse.next({
-          request
-        });
-
-        cookiesToSet.forEach(({ name, value, options }) => {
-          supabaseResponse.cookies.set(name, value, options);
-        });
-      }
-    }
-  });
-
-  // Calling getUser refreshes expired auth tokens when possible.
-  await supabase.auth.getUser();
-
-  return supabaseResponse;
 }

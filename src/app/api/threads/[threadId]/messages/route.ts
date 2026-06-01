@@ -38,12 +38,8 @@ export const POST = withApiMetrics(
       return errorResponse({ code: 'unauthorized', message: 'Unauthorized' }, 401);
     }
     const { threadId } = await params;
-    const thread = await getThread(user.id, threadId);
-    if (!thread) {
-      return errorResponse({ code: 'not_found', message: 'Thread not found' }, 404);
-    }
-    recordAppEvent('chat_message_request', 'started');
 
+    // Parse body and fetch thread + rate limit in parallel (independent operations)
     let body: { content: string; requestId?: string; stream?: boolean };
     try {
       body = messageCreateSchema.parse(await request.json());
@@ -52,18 +48,30 @@ export const POST = withApiMetrics(
       return errorResponse({ code: 'invalid_request', message: 'Invalid request' }, 400);
     }
 
-    if (!(await takeToken(`user:${user.id}`))) {
+    const [thread, rateLimited] = await Promise.all([
+      getThread(user.id, threadId),
+      takeToken(`user:${user.id}`)
+    ]);
+
+    if (!thread) {
+      return errorResponse({ code: 'not_found', message: 'Thread not found' }, 404);
+    }
+    if (!rateLimited) {
       recordAppEvent('chat_message_request', 'rate_limited');
       return errorResponse({ code: 'rate_limited', message: 'Too many requests', retryable: true }, 429);
     }
 
-    if (body.requestId) {
-      const existingMessages = await findMessagesByRequestId(thread.id, body.requestId);
-      const existingAssistant = existingMessages.find((message) => message.role === 'assistant');
-      if (existingAssistant) {
-        recordAppEvent('chat_message_request', 'success');
-        return jsonResponse({ message: toMessageDto(existingAssistant) });
-      }
+    recordAppEvent('chat_message_request', 'started');
+
+    // Fetch existing messages once (used for both dedup and user-message check)
+    const existingMessages = body.requestId
+      ? await findMessagesByRequestId(thread.id, body.requestId)
+      : [];
+
+    const existingAssistant = existingMessages.find((message) => message.role === 'assistant');
+    if (existingAssistant) {
+      recordAppEvent('chat_message_request', 'success');
+      return jsonResponse({ message: toMessageDto(existingAssistant) });
     }
 
     const runtimeProvider = getRuntimeProvider(thread);
@@ -95,14 +103,14 @@ export const POST = withApiMetrics(
         recordAppEvent('chat_message_request', 'key_missing');
         return errorResponse({ code: 'key_missing', message: 'Connect a key first' }, 400);
       }
-      await prisma.providerKey.update({
+      // Fire-and-forget: don't block the LLM call for this non-critical write
+      prisma.providerKey.update({
         where: { id: key.id },
         data: { lastUsedAt: new Date() }
-      });
+      }).catch(() => {});
       rawKey = decryptSecret(key.keyCiphertext);
     }
 
-    const existingMessages = body.requestId ? await findMessagesByRequestId(thread.id, body.requestId) : [];
     const existingUserMessage = existingMessages.find((message) => message.role === 'user');
     const userMessage =
       existingUserMessage ??
