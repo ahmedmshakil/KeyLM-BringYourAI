@@ -82,7 +82,16 @@ export const GET = withApiMetrics(
     }
     const keys = await prisma.providerKey.findMany({
       where: { userId: user.id, provider },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        provider: true,
+        keyMask: true,
+        status: true,
+        createdAt: true,
+        lastValidatedAt: true,
+        lastUsedAt: true
+      }
     });
     return jsonResponse({
       keys: keys.map((key) => ({

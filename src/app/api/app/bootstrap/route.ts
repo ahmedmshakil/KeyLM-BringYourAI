@@ -71,19 +71,26 @@ export const GET = withApiMetrics('/api/app/bootstrap', 'GET', async () => {
     });
   }
 
-  const [keys, threads, freeUsage] = await Promise.all([
-    prisma.providerKey.findMany({
-      where: {
-        userId: user.id,
-        provider: {
-          in: KEY_PROVIDER_IDS as unknown as Provider[]
-        }
-      },
-      orderBy: [{ provider: 'asc' }, { createdAt: 'desc' }]
-    }),
-    listThreads(user.id),
-    getFreeUsageStatus(user.id)
-  ]);
+  // Keys without ciphertext first so we can derive active key IDs, then parallelize
+  // threads + freeUsage + model caches (no secret material in bootstrap payload).
+  const keys = await prisma.providerKey.findMany({
+    where: {
+      userId: user.id,
+      provider: {
+        in: KEY_PROVIDER_IDS as unknown as Provider[]
+      }
+    },
+    orderBy: [{ provider: 'asc' }, { createdAt: 'desc' }],
+    select: {
+      id: true,
+      provider: true,
+      keyMask: true,
+      status: true,
+      createdAt: true,
+      lastValidatedAt: true,
+      lastUsedAt: true
+    }
+  });
 
   const providers = createEmptyProviders();
   for (const key of keys) {
@@ -98,35 +105,47 @@ export const GET = withApiMetrics('/api/app/bootstrap', 'GET', async () => {
     });
   }
 
-  const activeKeys: Array<{ provider: KeyProviderId; keyId: string }> = KEY_PROVIDER_IDS.flatMap((provider) => {
+  const activeKeyIds = KEY_PROVIDER_IDS.flatMap((provider) => {
     const active = providers[provider].find((key) => key.status === 'active');
-    return active ? [{ provider, keyId: active.id }] : [];
+    return active ? [active.id] : [];
   });
 
-  const caches = activeKeys.length
-    ? await prisma.providerModelCache.findMany({
-        where: {
-          userId: user.id,
-          keyId: {
-            in: activeKeys.map((item) => item.keyId)
+  const [threads, freeUsage, caches] = await Promise.all([
+    listThreads(user.id),
+    getFreeUsageStatus(user.id),
+    activeKeyIds.length
+      ? prisma.providerModelCache.findMany({
+          where: {
+            userId: user.id,
+            keyId: { in: activeKeyIds }
+          },
+          select: {
+            keyId: true,
+            models: true,
+            expiresAt: true,
+            fetchedAt: true
           }
-        }
-      })
-    : [];
+        })
+      : Promise.resolve([])
+  ]);
 
   const cacheByKeyId = new Map(caches.map((cache) => [cache.keyId, cache]));
   const now = Date.now();
   const models = createEmptyModels();
   const modelsMeta = createEmptyModelsMeta();
 
-  for (const activeKey of activeKeys) {
-    const cache = cacheByKeyId.get(activeKey.keyId);
+  for (const provider of KEY_PROVIDER_IDS) {
+    const active = providers[provider].find((key) => key.status === 'active');
+    if (!active) {
+      continue;
+    }
+    const cache = cacheByKeyId.get(active.id);
     if (!cache) {
       continue;
     }
 
-    models[activeKey.provider] = cache.models as typeof models.openai;
-    modelsMeta[activeKey.provider] = {
+    models[provider] = cache.models as typeof models.openai;
+    modelsMeta[provider] = {
       stale: cache.expiresAt.getTime() <= now,
       fetchedAt: cache.fetchedAt
     };

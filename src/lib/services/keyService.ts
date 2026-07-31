@@ -99,7 +99,18 @@ export async function getActiveKey(userId: string, provider: Provider) {
   return withDatabaseMetrics('provider_key.find_active', () =>
     prisma.providerKey.findFirst({
       where: { userId, provider, status: 'active' },
-      orderBy: { lastValidatedAt: 'desc' }
+      orderBy: { lastValidatedAt: 'desc' },
+      select: {
+        id: true,
+        userId: true,
+        provider: true,
+        keyCiphertext: true,
+        keyMask: true,
+        status: true,
+        lastValidatedAt: true,
+        lastUsedAt: true,
+        createdAt: true
+      }
     })
   );
 }
