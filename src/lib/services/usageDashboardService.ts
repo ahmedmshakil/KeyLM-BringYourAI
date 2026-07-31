@@ -339,7 +339,7 @@ async function collectUsageMessages(userId: string, windowStart: Date): Promise<
 
 export async function getUsageDashboard(userId: string): Promise<UsageDashboardResponse> {
   const now = new Date();
-  const last14dStart = addUtcDays(startOfUtcDay(now), -13);
+  const last10dStart = addUtcDays(startOfUtcDay(now), -9);
   const last8wStart = addUtcDays(startOfUtcWeek(now), -7 * 7);
   const last12mStart = addUtcMonths(startOfUtcMonth(now), -11);
   const last30dStart = addUtcDays(startOfUtcDay(now), -29);
@@ -348,11 +348,11 @@ export async function getUsageDashboard(userId: string): Promise<UsageDashboardR
   const rows = await collectUsageMessages(userId, last12mStart);
   const rows30d = rows.filter((row) => row.createdAt >= last30dStart);
   const rows7d = rows.filter((row) => row.createdAt >= last7dStart);
-  const rows14d = rows.filter((row) => row.createdAt >= last14dStart);
+  const rows10d = rows.filter((row) => row.createdAt >= last10dStart);
   const rows8w = rows.filter((row) => row.createdAt >= last8wStart);
   const rows12m = rows.filter((row) => row.createdAt >= last12mStart);
 
-  const daily14d = buildDailySeries(rows, 14, now);
+  const daily10d = buildDailySeries(rows, 10, now);
   const weekly8w = buildWeeklySeries(rows, 8, now);
   const monthly12m = buildMonthlySeries(rows, 12, now);
 
@@ -365,11 +365,11 @@ export async function getUsageDashboard(userId: string): Promise<UsageDashboardR
     coverage30d: buildCoverage(rows30d),
     providers30d: buildProviderUsageSummary(rows30d),
     models30d: buildModelUsageSummary(rows30d),
-    daily14d,
+    daily10d,
     weekly8w,
     monthly12m,
     ranges: {
-      day: buildRangeSummary('day', 'Daily', 'Last 14 days', rows14d, daily14d),
+      day: buildRangeSummary('day', 'Daily', 'Last 10 days', rows10d, daily10d),
       week: buildRangeSummary('week', 'Weekly', 'Last 8 weeks', rows8w, weekly8w),
       month: buildRangeSummary('month', 'Monthly', 'Last 12 months', rows12m, monthly12m)
     }

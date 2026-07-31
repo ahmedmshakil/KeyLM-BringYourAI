@@ -17,7 +17,8 @@ const KEY_PROVIDERS = [
 ] as const;
 
 type KeyProviderId = (typeof KEY_PROVIDERS)[number]['id'];
-type RuntimeProviderId = KeyProviderId | 'groq';
+type RuntimeProviderId = KeyProviderId | 'groq' | 'xiaomi';
+type WorkspaceMode = 'shared' | 'byok';
 
 type User = PublicUser;
 
@@ -109,7 +110,7 @@ type UsageDashboard = {
   coverage30d: UsageCoverage;
   providers30d: ProviderUsageSummary[];
   models30d: ModelUsageSummary[];
-  daily14d: UsageSeriesPoint[];
+  daily10d: UsageSeriesPoint[];
   weekly8w: UsageSeriesPoint[];
 };
 
@@ -119,7 +120,13 @@ type UsageGrain = 'day' | 'week';
 type FreeUsageInfo = {
   provider: 'groq';
   model: string;
-  models: string[];
+  models: Array<{
+    id: string;
+    displayName: string;
+    provider: 'groq' | 'xiaomi';
+    tier: 'free' | 'pro';
+    available: boolean;
+  }>;
   user: {
     limit: number;
     used: number;
@@ -195,7 +202,8 @@ const PROVIDER_LABELS: Record<RuntimeProviderId, string> = {
   openai: 'OpenAI',
   gemini: 'Gemini',
   anthropic: 'Anthropic',
-  groq: 'KeyLM Free'
+  groq: 'Groq',
+  xiaomi: 'Xiaomi MiMo'
 };
 
 const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
@@ -209,6 +217,9 @@ const truncateWords = (value: string, limit: number) => {
   const snippet = words.slice(0, limit).join(' ');
   return words.length > limit ? `${snippet}...` : snippet;
 };
+
+const isSharedRuntimeProvider = (provider: RuntimeProviderId): provider is 'groq' | 'xiaomi' =>
+  provider === 'groq' || provider === 'xiaomi';
 
 const getThreadFallbackTitle = (messages: MessageInfo[]) => {
   const firstUserMessage = messages.find((message) => message.role === 'user' && message.content.trim());
@@ -320,6 +331,7 @@ function AppPageClient() {
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [activeThread, setActiveThread] = useState<ThreadDetail | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ThreadInfo | null>(null);
+  const [byokProvidersOpen, setByokProvidersOpen] = useState(false);
   const [messageInput, setMessageInput] = useState('');
   const [notice, setNotice] = useState('');
   const [freeThresholdNotice, setFreeThresholdNotice] = useState('');
@@ -327,6 +339,8 @@ function AppPageClient() {
   const [isDark, setIsDark] = useState(false);
   const [freeUsage, setFreeUsage] = useState<FreeUsageInfo | null>(null);
   const [selectedFreeModel, setSelectedFreeModel] = useState<string>('');
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('shared');
+  const [sharedPickerOpen, setSharedPickerOpen] = useState(false);
   const [demoUsage, setDemoUsage] = useState<DemoUsageInfo>(createDefaultDemoUsage());
   const [demoMessages, setDemoMessages] = useState<MessageInfo[]>([]);
   const [demoLimitModalOpen, setDemoLimitModalOpen] = useState(false);
@@ -356,9 +370,10 @@ function AppPageClient() {
     return threads.find((thread) => thread.id === activeThread.id) ?? null;
   }, [activeThread, threads]);
 
-  const activeThreadIsFree = activeThread?.provider === 'groq';
-  const freeModeAvailable = freeUsage?.status === 'available';
-  const shouldShowFreeSource = activeThreadIsFree || (connectedProviders.length === 0 && freeModeAvailable);
+  const selectedSharedModel =
+    freeUsage?.models.find((model) => model.id === selectedFreeModel) ??
+    freeUsage?.models.find((model) => model.id === freeUsage.model) ??
+    freeUsage?.models[0];
   const isDemoMode = demoModeRequested && !user;
   const activeThreadTitle = activeThread
     ? activeThreadSummary?.title?.trim() || getThreadFallbackTitle(activeThread.messages)
@@ -369,7 +384,7 @@ function AppPageClient() {
   const usageChartPoints = usageDashboard
     ? usageGrain === 'week'
       ? usageDashboard.weekly8w
-      : usageDashboard.daily14d
+      : usageDashboard.daily10d
     : [];
   const usageChartMax = Math.max(1, ...usageChartPoints.map((point) => point.totalTokens));
   const usageHasTrackedReplies = (usageDashboard?.coverage30d.messagesWithUsage ?? 0) > 0;
@@ -559,7 +574,7 @@ function AppPageClient() {
     setFreeUsage(payload.freeUsage);
     if (payload.freeUsage?.models?.length) {
       setSelectedFreeModel((prev) =>
-        prev && payload.freeUsage!.models.includes(prev) ? prev : payload.freeUsage!.model
+        prev && payload.freeUsage!.models.some((model) => model.id === prev) ? prev : payload.freeUsage!.model
       );
     }
 
@@ -572,6 +587,9 @@ function AppPageClient() {
       : nextConnectedProviders[0] ?? 'openai';
 
     setCurrentProvider(resolvedProvider);
+    if (nextConnectedProviders.length === 0) {
+      setWorkspaceMode('shared');
+    }
     setSelectedModel((prev) => {
       const availableModels = payload.models[resolvedProvider] ?? [];
       return availableModels.some((model) => model.id === prev) ? prev : availableModels[0]?.id ?? '';
@@ -728,14 +746,14 @@ function AppPageClient() {
     );
 
     if (reachedThreshold) {
-      const noticeKey = `keylm:free-threshold-notice:${user.id}:${freeUsage.resetAt}:${reachedThreshold}`;
+      const noticeKey = `keylm:shared-threshold-notice:${user.id}:${freeUsage.resetAt}:${reachedThreshold}`;
       const alreadyShown = window.localStorage.getItem(noticeKey) === '1';
       if (alreadyShown) {
         previousFreeUsedRef.current = currentUsed;
         return;
       }
       const nextMessage =
-        `You have reached ${reachedThreshold} free KeyLM requests today. For better output and deeper thinking, connect your own Gemini, OpenAI, or Anthropic key.`;
+        `You have reached ${reachedThreshold} shared KeyLM requests today. Use your own API key any time for separate provider access.`;
       setFreeThresholdNotice(nextMessage);
       window.localStorage.setItem(noticeKey, '1');
       if (freeNoticeTimeoutRef.current) {
@@ -990,6 +1008,7 @@ function AppPageClient() {
         [provider]: [res.key, ...prev[provider].filter((item) => item.id !== res.key.id)]
       }));
       setCurrentProvider(provider);
+      setWorkspaceMode('byok');
       await loadModels(provider, true);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Failed to connect key');
@@ -1006,16 +1025,23 @@ function AppPageClient() {
 
   const handleNewThread = async (): Promise<ThreadDetail | null> => {
     try {
-      if (connectedProviders.length === 0) {
+      if (workspaceMode === 'shared') {
         const freeStatus = freeUsage ?? (await loadFreeUsage());
         if (freeStatus?.status !== 'available') {
           const message =
             freeStatus?.status === 'global_exhausted'
-              ? 'No global free API requests are left today. Connect your own API key to continue.'
+              ? 'No global shared API requests are left today. Use your own API key to continue.'
               : freeStatus?.status === 'user_exhausted'
-                ? 'Your free daily request limit is over. Connect your own API key to continue chatting.'
-                : 'KeyLM free mode is not available right now. Connect your own API key to continue.';
+                ? 'Your shared daily request limit is over. Use your own API key to continue chatting.'
+                : 'KeyLM shared catalog is not available right now. Use your own API key to continue.';
           setNotice(message);
+          return null;
+        }
+
+        const model = freeStatus.models.find((item) => item.id === selectedFreeModel) ??
+          freeStatus.models.find((item) => item.id === freeStatus.model);
+        if (!model?.available) {
+          setNotice('This shared model is not configured right now.');
           return null;
         }
 
@@ -1023,7 +1049,7 @@ function AppPageClient() {
           method: 'POST',
           body: JSON.stringify({
             mode: 'free',
-            model: selectedFreeModel || undefined
+            model: model.id
           })
         });
         const created = res.thread;
@@ -1036,7 +1062,7 @@ function AppPageClient() {
         return created;
       }
 
-      if (!selectedModel) {
+      if (!connectedProviders.includes(currentProvider) || !selectedModel) {
         setNotice('Pick a model before starting a thread.');
         return null;
       }
@@ -1067,10 +1093,12 @@ function AppPageClient() {
     try {
       const res = await apiJson<{ thread: ThreadDetail }>(`/api/threads/${threadId}`);
       setActiveThread(res.thread);
-      if (res.thread.provider !== 'groq') {
+      if (!isSharedRuntimeProvider(res.thread.provider)) {
+        setWorkspaceMode('byok');
         setCurrentProvider(res.thread.provider);
         setSelectedModel(res.thread.model);
       } else {
+        setWorkspaceMode('shared');
         setSelectedFreeModel(res.thread.model);
       }
     } catch (error) {
@@ -1227,7 +1255,7 @@ function AppPageClient() {
     const controller = new AbortController();
     abortRef.current = controller;
     const shouldStream = true;
-    const shouldRefreshFreeUsage = thread.provider === 'groq';
+    const shouldRefreshFreeUsage = isSharedRuntimeProvider(thread.provider);
 
     try {
       const res = await fetch(`/api/threads/${thread.id}/messages`, {
@@ -1338,7 +1366,7 @@ function AppPageClient() {
     flushBufferedAssistantDelta();
     abortRef.current?.abort();
     setStreaming(false);
-    if (activeThread?.provider === 'groq') {
+    if (activeThread && isSharedRuntimeProvider(activeThread.provider)) {
       loadFreeUsage();
     }
   };
@@ -1434,11 +1462,11 @@ function AppPageClient() {
   const freeResetLabel = formatResetTime(freeUsage?.resetAt);
   const freeStatusMessage =
     freeUsage?.status === 'global_exhausted'
-      ? 'No global free API left today. Add your own Gemini, OpenAI, or Anthropic key to keep chatting.'
+      ? 'No global shared API requests are left today. Use your own Gemini, OpenAI, or Anthropic key to keep chatting.'
       : freeUsage?.status === 'user_exhausted'
-        ? `Your ${freeUsage?.user.limit ?? 50} daily free requests are used up. Add your own Gemini, OpenAI, or Anthropic key to continue.`
+        ? `Your ${freeUsage?.user.limit ?? 50} daily shared requests are used up. Use your own Gemini, OpenAI, or Anthropic key to continue.`
         : freeUsage?.status === 'disabled'
-          ? 'KeyLM free mode is unavailable right now. Add your own Gemini, OpenAI, or Anthropic key to continue.'
+          ? 'KeyLM shared catalog is unavailable right now. Use your own Gemini, OpenAI, or Anthropic key to continue.'
           : '';
 
   if (loading) {
@@ -1637,66 +1665,129 @@ function AppPageClient() {
                 <strong>{demoModelLabel}</strong>
               </div>
             </div>
-          ) : shouldShowFreeSource ? (
-            <div className="free-source-banner">
-              <span className="badge glow">KeyLM Free</span>
-              <select
-                className="select"
-                value={selectedFreeModel || freeUsage?.model || ''}
-                onChange={(e) => setSelectedFreeModel(e.target.value)}
-              >
-                {(freeUsage?.models ?? []).map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : connectedProviders.length === 0 ? (
-            <div className="free-source-banner free-source-banner-muted">
-              <span className="badge">Bring Your Key</span>
-              <div>
-                <strong>Personal API key required</strong>
-                <p>Connect Gemini, OpenAI, or Anthropic to start a new BYOK thread.</p>
-              </div>
-            </div>
           ) : (
             <>
-              <div className="workspace-controls">
-                <select
-                  className="select"
-                  value={currentProvider}
-                  onChange={(event) => setCurrentProvider(event.target.value as KeyProviderId)}
-                >
-                  {KEY_PROVIDERS.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="select"
-                  value={selectedModel}
-                  onChange={(event) => setSelectedModel(event.target.value)}
-                  disabled={!connectedProviders.includes(currentProvider)}
-                >
-                  {models[currentProvider]?.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.displayName}
-                    </option>
-                  ))}
-                </select>
-                <button className="button secondary" onClick={() => loadModels(currentProvider, true)}>
-                  Refresh models
-                </button>
+              <div className="workspace-row">
+                <div className="workspace-mode-toggle" role="tablist" aria-label="Model source">
+                  <button
+                    className={`workspace-mode-button ${workspaceMode === 'shared' ? 'active' : ''}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={workspaceMode === 'shared'}
+                    onClick={() => {
+                      setWorkspaceMode('shared');
+                      setSharedPickerOpen(false);
+                    }}
+                  >
+                    KeyLM catalog
+                  </button>
+                  <button
+                    className={`workspace-mode-button ${workspaceMode === 'byok' ? 'active' : ''}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={workspaceMode === 'byok'}
+                    disabled={connectedProviders.length === 0}
+                    onClick={() => {
+                      setWorkspaceMode('byok');
+                      setSharedPickerOpen(false);
+                    }}
+                  >
+                    My keys
+                  </button>
+                </div>
+                <div className="workspace-source-control">
+                  {workspaceMode === 'shared' ? (
+                    <div className="shared-model-picker">
+                      <button
+                        className="shared-model-trigger"
+                        type="button"
+                        aria-haspopup="menu"
+                        aria-expanded={sharedPickerOpen}
+                        onClick={() => setSharedPickerOpen((open) => !open)}
+                      >
+                        <span>
+                          <span className={`model-tier-pill ${selectedSharedModel?.tier ?? 'free'}`}>
+                            {selectedSharedModel?.tier === 'pro' ? 'Pro' : 'Free'}
+                          </span>
+                          <strong>{selectedSharedModel?.displayName ?? 'Select a model'}</strong>
+                        </span>
+                        <span aria-hidden="true">▾</span>
+                      </button>
+                      {sharedPickerOpen && (
+                        <div className="shared-model-menu" role="menu" aria-label="KeyLM shared models">
+                          {(freeUsage?.models ?? []).map((model) => (
+                            <button
+                              key={model.id}
+                              className={`shared-model-option ${model.id === selectedSharedModel?.id ? 'selected' : ''}`}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={model.id === selectedSharedModel?.id}
+                              disabled={!model.available}
+                              onClick={() => {
+                                setSelectedFreeModel(model.id);
+                                setSharedPickerOpen(false);
+                              }}
+                            >
+                              <span className="shared-model-copy">
+                                <strong>{model.displayName}</strong>
+                                <small>{model.id} · {model.provider === 'xiaomi' ? 'Xiaomi MiMo' : 'Groq'}</small>
+                              </span>
+                              <span className={`model-tier-pill ${model.tier}`}>{model.tier === 'pro' ? 'Pro' : 'Free'}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : connectedProviders.length === 0 ? (
+                    <div className="free-source-banner free-source-banner-muted">
+                      <span className="badge">Bring Your Key</span>
+                      <div>
+                        <strong>Personal API key required</strong>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="workspace-controls">
+                      <select
+                        className="select"
+                        value={currentProvider}
+                        onChange={(event) => setCurrentProvider(event.target.value as KeyProviderId)}
+                      >
+                        {KEY_PROVIDERS.filter((provider) => connectedProviders.includes(provider.id)).map((provider) => (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="select"
+                        value={selectedModel}
+                        onChange={(event) => setSelectedModel(event.target.value)}
+                      >
+                        {models[currentProvider]?.map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {model.displayName}
+                          </option>
+                        ))}
+                      </select>
+                      <button className="button secondary" onClick={() => loadModels(currentProvider, true)}>
+                        Refresh models
+                      </button>
+                      {modelsMeta[currentProvider]?.stale && (
+                        <span className="tag workspace-stale">Cached models</span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
-              {modelsMeta[currentProvider]?.stale && (
-                <p className="tag">Showing cached models. Refresh to retry.</p>
-              )}
             </>
           )}
         </div>
         <div className="header-right">
+          {!isDemoMode && (
+            <button className="button secondary byok-providers-trigger" type="button" onClick={() => setByokProvidersOpen(true)}>
+              BYOK Providers
+            </button>
+          )}
           <button
             className={`theme-toggle ${isDark ? 'is-dark' : ''}`}
             onClick={() => setIsDark((prev) => !prev)}
@@ -1759,6 +1850,9 @@ function AppPageClient() {
                 {threads.map((thread) => {
                   const fallbackTitle = thread.lastMessage ? truncateWords(thread.lastMessage, 4) || 'New thread' : 'New thread';
                   const threadTitle = thread.title && thread.title.trim() ? thread.title : fallbackTitle;
+                  const sharedThreadModel = isSharedRuntimeProvider(thread.provider)
+                    ? freeUsage?.models.find((model) => model.id === thread.model)
+                    : undefined;
                   const messagePreview = thread.lastMessage
                     ? truncateWords(thread.lastMessage, 8) || 'No messages yet'
                     : 'No messages yet';
@@ -1771,7 +1865,11 @@ function AppPageClient() {
                       >
                         <div className="thread-title">
                           <span className="thread-title-text">{threadTitle}</span>
-                          {thread.provider === 'groq' && <span className="thread-pill">KeyLM Free</span>}
+                          {sharedThreadModel && (
+                            <span className={`thread-pill ${sharedThreadModel.tier}`}>
+                              {sharedThreadModel.tier === 'pro' ? 'Pro' : 'Free'}
+                            </span>
+                          )}
                         </div>
                         <div className="thread-preview">{messagePreview}</div>
                       </button>
@@ -1922,11 +2020,11 @@ function AppPageClient() {
             <div className="card free-usage-card">
               <div className="free-usage-header">
                 <div>
-                  <h3>Free quota</h3>
-                  <p>Shared KeyLM fallback</p>
+                  <h3>Your quota</h3>
+                  <p>KeyLM Free and Pro catalog</p>
                 </div>
                 <span className={`status ${freeUsage?.status === 'available' ? 'connected' : 'idle'}`}>
-                  {freeUsage?.status === 'available' ? 'Available' : 'BYOK needed'}
+                  {freeUsage?.status === 'available' ? 'Available' : 'Unavailable'}
                 </span>
               </div>
               <div className="free-usage-grid">
@@ -1999,9 +2097,9 @@ function AppPageClient() {
                       <div className="usage-chart-panel">
                         <div className="usage-chart-header">
                           <strong>{usageGrain === 'day' ? 'Daily trend' : 'Weekly trend'}</strong>
-                          <span>{usageGrain === 'day' ? 'Last 14 days' : 'Last 8 weeks'}</span>
+                          <span>{usageGrain === 'day' ? 'Last 10 days' : 'Last 8 weeks'}</span>
                         </div>
-                        <div className="usage-chart" role="img" aria-label="Token usage trend chart">
+                        <div className={`usage-chart ${usageGrain}`} role="img" aria-label="Token usage trend chart">
                           {usageChartPoints.map((point, index) => {
                             const height = point.totalTokens > 0 ? Math.max(8, (point.totalTokens / usageChartMax) * 100) : 4;
                             const showLabel = usageGrain === 'week' || index % 2 === 0 || index === usageChartPoints.length - 1;
@@ -2079,60 +2177,81 @@ function AppPageClient() {
                 <p className="usage-empty-state">Usage data is not available yet.</p>
               )}
             </div>
-            <div className="card">
-              <h3>Providers</h3>
-              <p>Connect your API keys</p>
-            </div>
-            {KEY_PROVIDERS.map((provider) => {
-              const keys = providers[provider.id];
-              const connected = keys.some((key) => key.status === 'active');
-              return (
-                <div key={provider.id} className="card provider-card">
-                  <div className="provider-header">
-                    <div>
-                      <h4>{provider.name}</h4>
-                      <p>{provider.detail}</p>
-                    </div>
-                    <span className={`status ${connected ? 'connected' : 'idle'}`}>
-                      {connected ? 'Connected' : 'Idle'}
-                    </span>
-                  </div>
-                  <div className="provider-input">
-                    <input
-                      className="input"
-                      type="password"
-                      placeholder="Paste API key"
-                      value={keyInputs[provider.id]}
-                      onChange={(event) =>
-                        setKeyInputs((prev) => ({ ...prev, [provider.id]: event.target.value }))
-                      }
-                    />
-                    <button className="button" onClick={() => handleConnectKey(provider.id)}>
-                      Connect
-                    </button>
-                  </div>
-                  {keys.length > 0 && (
-                    <div className="connected-keys">
-                      {keys.map((key) => (
-                        <div key={key.id} className="key-item">
-                          <span className="tag">{key.keyMask}</span>
-                          <small>{key.status}</small>
-                          <button
-                            className="button secondary small"
-                            onClick={() => handleDeleteKey(provider.id, key.id)}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
           </aside>
         )}
       </div>
+
+      {!isDemoMode && byokProvidersOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="byok-providers-title">
+          <div className="card modal byok-providers-modal">
+            <div className="byok-providers-modal-header">
+              <div>
+                <span className="badge">BYOK</span>
+                <h3 id="byok-providers-title">BYOK Providers</h3>
+                <p>Connect and manage your personal API keys.</p>
+              </div>
+              <button
+                className="button secondary small"
+                type="button"
+                onClick={() => setByokProvidersOpen(false)}
+                aria-label="Close BYOK providers"
+              >
+                Close
+              </button>
+            </div>
+            <div className="byok-provider-list">
+              {KEY_PROVIDERS.map((provider) => {
+                const keys = providers[provider.id];
+                const connected = keys.some((key) => key.status === 'active');
+                return (
+                  <div key={provider.id} className="provider-card">
+                    <div className="provider-header">
+                      <div>
+                        <h4>{provider.name}</h4>
+                        <p>{provider.detail}</p>
+                      </div>
+                      <span className={`status ${connected ? 'connected' : 'idle'}`}>
+                        {connected ? 'Connected' : 'Idle'}
+                      </span>
+                    </div>
+                    <div className="provider-input">
+                      <input
+                        className="input"
+                        type="password"
+                        placeholder="Paste API key"
+                        value={keyInputs[provider.id]}
+                        onChange={(event) =>
+                          setKeyInputs((prev) => ({ ...prev, [provider.id]: event.target.value }))
+                        }
+                      />
+                      <button className="button" type="button" onClick={() => handleConnectKey(provider.id)}>
+                        Connect
+                      </button>
+                    </div>
+                    {keys.length > 0 && (
+                      <div className="connected-keys">
+                        {keys.map((key) => (
+                          <div key={key.id} className="key-item">
+                            <span className="tag">{key.keyMask}</span>
+                            <small>{key.status}</small>
+                            <button
+                              className="button secondary small"
+                              type="button"
+                              onClick={() => handleDeleteKey(provider.id, key.id)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteTarget && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">

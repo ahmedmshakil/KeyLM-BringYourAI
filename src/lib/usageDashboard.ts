@@ -60,7 +60,7 @@ export type UsageDashboardResponse = {
   coverage30d: UsageCoverage;
   providers30d: ProviderUsageSummary[];
   models30d: ModelUsageSummary[];
-  daily14d: UsageSeriesPoint[];
+  daily10d: UsageSeriesPoint[];
   weekly8w: UsageSeriesPoint[];
   monthly12m: UsageSeriesPoint[];
   ranges: Record<UsageRangeKey, UsageRangeSummary>;
@@ -76,7 +76,8 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   openai: 'OpenAI',
   gemini: 'Gemini',
   anthropic: 'Anthropic',
-  groq: 'KeyLM Free'
+  groq: 'Groq',
+  xiaomi: 'Xiaomi MiMo'
 };
 
 export const formatTokenCount = (value: number) => numberFormatter.format(value);

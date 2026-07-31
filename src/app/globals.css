@@ -431,17 +431,171 @@ button {
 
 .header-center {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  min-width: 0;
+}
+
+.workspace-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(100%, 680px);
+}
+
+.workspace-source-control {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .workspace-controls {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+  flex-wrap: nowrap;
+  gap: 8px;
   align-items: center;
   justify-content: center;
+}
+
+.workspace-mode-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.workspace-mode-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.workspace-mode-button.active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 2px 7px rgba(31, 27, 22, 0.1);
+}
+
+.workspace-mode-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.shared-model-picker {
+  position: relative;
+  z-index: 3;
+  min-width: 260px;
+}
+
+.shared-model-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 8px 10px;
+  color: var(--ink);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.shared-model-trigger > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.shared-model-trigger strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-model-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 18px 38px rgba(31, 27, 22, 0.18);
+}
+
+.shared-model-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 9px;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shared-model-option:hover,
+.shared-model-option.selected {
+  border-color: rgba(229, 111, 46, 0.25);
+  background: rgba(229, 111, 46, 0.08);
+}
+
+.shared-model-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.shared-model-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.shared-model-copy small {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-tier-pill {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(229, 111, 46, 0.25);
+  background: rgba(229, 111, 46, 0.12);
+  color: var(--warning);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.model-tier-pill.pro,
+.thread-pill.pro {
+  border-color: rgba(91, 78, 189, 0.3);
+  background: rgba(91, 78, 189, 0.13);
+  color: #5646b6;
+}
+
+.workspace-stale {
+  white-space: nowrap;
 }
 
 .free-source-banner {
@@ -474,6 +628,10 @@ button {
   justify-content: flex-end;
   align-items: center;
   gap: 12px;
+}
+
+.byok-providers-trigger {
+  margin-right: auto;
 }
 
 .demo-guest-pill {
@@ -566,6 +724,34 @@ button {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.byok-providers-modal {
+  width: min(620px, 92vw);
+  max-height: min(760px, 88vh);
+}
+
+.byok-providers-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.byok-providers-modal-header h3 {
+  margin-top: 8px;
+}
+
+.byok-providers-modal-header p {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.byok-provider-list {
+  display: grid;
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .modal-actions {
@@ -996,6 +1182,10 @@ button {
   min-height: 156px;
 }
 
+.usage-chart.day {
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+}
+
 .usage-chart-point {
   display: flex;
   flex-direction: column;
@@ -1095,6 +1285,9 @@ button {
 
 .provider-card {
   padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
 }
 
 .provider-header {
@@ -2458,7 +2651,27 @@ ol.docs-list li {
   }
 
   .header-left,
+  .header-center,
   .header-right {
+    justify-content: center;
+  }
+
+  .byok-providers-trigger {
+    margin-right: 0;
+  }
+
+  .workspace-row {
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .workspace-source-control {
+    max-width: 100%;
+  }
+
+  .workspace-controls {
+    flex-wrap: wrap;
     justify-content: center;
   }
 
