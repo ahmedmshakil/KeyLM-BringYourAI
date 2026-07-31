@@ -2,14 +2,14 @@
 
 **Your keys. Your models. Your control.**
 
-KeyLM is a unified AI chat workspace where users can start with a shared Groq-powered free tier, then bring their own OpenAI, Gemini, or Anthropic API keys for full control. It keeps provider keys encrypted, discovers models automatically, saves threaded conversations, and streams responses in real time.
+KeyLM is a unified AI chat workspace where users can start with a shared Groq Free and Xiaomi MiMo Pro catalog, then bring their own OpenAI, Gemini, or Anthropic API keys for full control. It keeps provider keys encrypted, discovers models automatically, saves threaded conversations, and streams responses in real time.
 
 ![KeyLM Dashboard](readmePics/home.png)
 
 ## ✨ Features
 
 - **BYOK workspace** — connect and use your own OpenAI, Gemini, or Anthropic API keys.
-- **KeyLM Free** — new users can chat through a shared Groq fallback with daily quotas.
+- **KeyLM shared catalog** — four Groq Free models and two Xiaomi MiMo Pro models share daily user/global quotas.
 - **Encrypted key storage** — provider keys are encrypted at rest and never exposed to the client.
 - **Multi-provider chat** — switch providers and models without changing apps.
 - **Auto model discovery** — fetch and cache model lists per connected provider key.
@@ -63,7 +63,7 @@ Use the guides below to run, deploy, and understand the project.
 - **Auth**: Supabase passwordless email auth + signed HTTP-only app sessions
 - **Security**: AES-256-GCM encryption for provider API keys
 - **Streaming**: Server-Sent Events (SSE)
-- **AI Providers**: OpenAI, Gemini, Anthropic, and Groq free fallback
+- **AI Providers**: OpenAI, Gemini, Anthropic, Groq, and Xiaomi MiMo
 - **Containerization**: Docker + Docker Compose
 
 ## 👨‍💻 Author
@@ -71,4 +71,3 @@ Use the guides below to run, deploy, and understand the project.
 **Shakil Ahmed**
 
 - GitHub: [@ahmedmshakil](https://github.com/ahmedmshakil)
-

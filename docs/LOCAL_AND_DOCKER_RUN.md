@@ -41,7 +41,7 @@ Generate a strong `APP_AUTH_SECRET`:
 node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-> `GROQ_API_KEY` is only required if you want the shared **KeyLM Free** fallback to work.
+> `GROQ_API_KEY` enables the four shared **Free** Groq models. Add `MIMO_API_KEY` to enable the two shared **Pro** Xiaomi MiMo models. Both use the same daily quota pool.
 
 ## Run locally
 
@@ -92,7 +92,7 @@ The repository includes a local-development Docker setup for the full stack:
 
 For a quick boot, you can skip this step and run Docker Compose directly. The compose file includes safe local-development defaults and automatically points Prisma to the bundled `db` service.
 
-For working login, Turnstile, or the shared Groq free tier, create a real `.env` from the Docker-specific example and fill in the same values described in `.env.example`:
+For working login, Turnstile, or the shared KeyLM catalog, create a real `.env` from the Docker-specific example and fill in the same values described in `.env.example`:
 
 ```bash
 cp .env.docker.example .env

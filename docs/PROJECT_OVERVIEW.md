@@ -8,7 +8,7 @@ This document explains what KeyLM is trying to solve, the main product goals, an
 
 KeyLM aims to be a simple, secure, multi-provider AI chat workspace where users can:
 
-- Start chatting immediately through a shared Groq-powered free tier.
+- Start chatting immediately through a shared catalog of Groq Free and Xiaomi MiMo Pro models.
 - Bring their own OpenAI, Gemini, or Anthropic API keys.
 - Keep provider keys encrypted and private.
 - Discover available models automatically.
@@ -69,6 +69,7 @@ Main building blocks:
   - Gemini
   - Anthropic
   - Groq
+  - Xiaomi MiMo
   - Shared provider interfaces for validation, model listing, chat, and streaming
 - **Persistence** — `prisma/**`
   - PostgreSQL schema
@@ -87,7 +88,7 @@ Main building blocks:
 2. `/api/app/bootstrap` resolves session and initial app state.
 3. Supabase handles passwordless Magic Link/OTP verification.
 4. KeyLM creates its own signed HTTP-only app session.
-5. User can chat with KeyLM Free if Groq fallback is configured and quota is available.
+5. User can select a KeyLM Free or Pro shared model while the total quota is available.
 6. User can add a provider API key for BYOK mode.
 7. Provider keys are validated, encrypted, masked, and stored in PostgreSQL.
 8. Model lists are fetched from provider APIs and cached per user/key.
@@ -163,8 +164,8 @@ The Prisma schema stores the core app state:
 - `Message` — user/assistant messages and provider metadata.
 - `AuditLog` — key lifecycle and security-relevant actions.
 - `PasswordResetToken` — legacy password reset support.
-- `UserDailyFreeUsage` — per-user daily Groq free quota.
-- `GlobalDailyFreeUsage` — global daily Groq free quota.
+- `UserDailyFreeUsage` — per-user daily shared-catalog quota.
+- `GlobalDailyFreeUsage` — global daily shared-catalog quota.
 - `RateLimitBucket` — DB-backed request rate limiting.
 
 Schema location:
@@ -173,22 +174,22 @@ Schema location:
 prisma/schema.prisma
 ```
 
-## Free-tier design
+## Shared catalog design
 
-KeyLM Free uses a server-side Groq key controlled by the app owner.
+KeyLM uses server-side Groq and Xiaomi MiMo keys controlled by the app owner. Four Groq models are labelled Free; two Xiaomi MiMo models are labelled Pro.
 
 Design goals:
 
 - Let new users try the product without bringing an API key.
-- Keep the shared Groq key server-side only.
-- Protect costs with per-user and global daily limits.
+- Keep the shared Groq and Xiaomi MiMo keys server-side only.
+- Protect costs with one per-user and global daily limit shared by all catalog models.
 - Encourage users to switch to their own key after initial exploration.
 
 
 ## Security notes
 
 - Provider API keys are encrypted at rest.
-- Shared Groq key is never exposed to browser clients.
+- Shared Groq and Xiaomi MiMo keys are never exposed to browser clients.
 - Session cookies are HTTP-only.
 - Model, thread, message, and key access is scoped to the authenticated user.
 - Rate limiting protects sensitive and expensive endpoints.
@@ -213,5 +214,4 @@ prisma/
 ├── schema.prisma     # Database schema
 └── migrations/       # Database migrations
 ```
-
 

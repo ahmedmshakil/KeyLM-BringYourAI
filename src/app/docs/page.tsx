@@ -29,7 +29,7 @@ const quickStartSteps = [
   },
   {
     title: 'Create the environment file',
-    code: 'cp .env.example .env\n# set DATABASE_URL, APP_AUTH_SECRET, APP_ENCRYPTION_KEY, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, GROQ_API_KEY'
+    code: 'cp .env.example .env\n# set DATABASE_URL, APP_AUTH_SECRET, APP_ENCRYPTION_KEY, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, GROQ_API_KEY, MIMO_API_KEY'
   },
   {
     title: 'Generate an encryption key',
@@ -48,7 +48,7 @@ const quickStartSteps = [
 const highlights = [
   {
     title: 'Hybrid Access',
-    description: 'New accounts get a shared Groq fallback before switching to personal keys.'
+    description: 'Signed-in users can choose shared Groq Free or Xiaomi MiMo Pro models before or alongside personal keys.'
   },
   {
     title: 'Model Catalog',
@@ -75,7 +75,7 @@ const architectureModules = [
   },
   {
     title: 'Provider adapters',
-    description: 'OpenAI, Gemini, Anthropic, and Groq adapters normalize models, streaming, and usage.'
+    description: 'OpenAI, Gemini, Anthropic, Groq, and Xiaomi MiMo adapters normalize models, streaming, and usage.'
   },
   {
     title: 'Model service',
@@ -86,8 +86,8 @@ const architectureModules = [
     description: 'Threads and messages are persisted with idempotent request IDs.'
   },
   {
-    title: 'Free-tier quotas',
-    description: 'Per-user and global daily counters gate the shared Groq fallback.'
+    title: 'Shared-catalog quotas',
+    description: 'Per-user and global daily counters gate all shared Groq Free and Xiaomi MiMo Pro requests.'
   }
 ];
 
@@ -158,14 +158,14 @@ const endpointGroups = [
       {
         method: 'GET',
         path: '/api/usage/free',
-        description: 'Return the current user/global Groq free quota snapshot.'
+        description: 'Return the current shared-catalog model list and user/global quota snapshot.'
       }
     ]
   },
   {
     title: 'Threads and messages',
     items: [
-      { method: 'POST', path: '/api/threads', description: 'Create a BYOK or KeyLM Free thread.' },
+      { method: 'POST', path: '/api/threads', description: 'Create a BYOK or shared KeyLM Free/Pro thread.' },
       { method: 'GET', path: '/api/threads', description: 'List threads for the user.' },
       { method: 'GET', path: '/api/threads/:threadId', description: 'Get a thread and its messages.' },
       { method: 'DELETE', path: '/api/threads/:threadId', description: 'Delete a thread.' },
@@ -312,8 +312,8 @@ export default function DocsPage() {
             <dd>32-byte base64 key for encrypting provider secrets.</dd>
           </div>
           <div>
-            <dt>GROQ_API_KEY</dt>
-            <dd>Server-only API key used for the shared KeyLM Free Groq pool.</dd>
+          <dt>GROQ_API_KEY</dt>
+          <dd>Server-only API key used for the four shared KeyLM Free Groq models.</dd>
           </div>
           <div>
             <dt>GROQ_BASE_URL</dt>
@@ -321,19 +321,27 @@ export default function DocsPage() {
           </div>
           <div>
             <dt>GROQ_FREE_MODEL</dt>
-            <dd>Fixed shared free model, defaults to moonshotai/kimi-k2-instruct-0905.</dd>
+            <dd>Initial shared Groq model selection and demo model, defaults to moonshotai/kimi-k2-instruct-0905.</dd>
           </div>
           <div>
             <dt>GROQ_FREE_FALLBACK_MODELS</dt>
             <dd>Optional comma-separated Groq fallback models if the primary free model is unavailable.</dd>
           </div>
           <div>
+            <dt>MIMO_API_KEY</dt>
+            <dd>Server-only Xiaomi MiMo API key used for the shared Pro models.</dd>
+          </div>
+          <div>
+            <dt>MIMO_BASE_URL</dt>
+            <dd>Xiaomi MiMo base URL, defaults to https://api.xiaomimimo.com/v1.</dd>
+          </div>
+          <div>
             <dt>FREE_USER_DAILY_LIMIT</dt>
-            <dd>Per-user daily free request limit, defaults to 50.</dd>
+            <dd>Per-user daily shared-catalog request limit, defaults to 50.</dd>
           </div>
           <div>
             <dt>FREE_GLOBAL_DAILY_LIMIT</dt>
-            <dd>Global daily free request limit, defaults to 1000.</dd>
+            <dd>Global daily shared-catalog request limit, defaults to 100.</dd>
           </div>
           <div>
             <dt>RATE_LIMIT_PER_MINUTE</dt>
@@ -355,7 +363,7 @@ export default function DocsPage() {
         <h2>User Flow</h2>
         <ol className="docs-list">
           <li>Create an account or sign in.</li>
-          <li>Use KeyLM Free immediately if daily user/global Groq quota is still available.</li>
+          <li>Choose a KeyLM Free Groq model or Pro Xiaomi MiMo model while daily quota is available.</li>
           <li>Add a provider key and validate it with a lightweight request when you want BYOK mode.</li>
           <li>Load the model list for connected providers and create BYOK threads.</li>
           <li>Send a message and stream responses via SSE.</li>
@@ -429,11 +437,11 @@ export default function DocsPage() {
       <section id="ux" className="card docs-section">
         <h2>UX Behavior</h2>
         <ul className="docs-list">
-          <li>Users without active keys can start on KeyLM Free while quota remains.</li>
-          <li>Model dropdown appears only after a provider key is active.</li>
+          <li>All signed-in users can choose the shared KeyLM Free/Pro catalog while quota remains.</li>
+          <li>The shared catalog and BYOK model controls remain available independently.</li>
           <li>Model lists are cached for 24 hours and can be refreshed manually.</li>
-          <li>Threads are locked to the provider and model chosen at creation, including Groq free threads.</li>
-          <li>After 5 free requests, the UI shows a persistent reminder to connect a personal key for better output.</li>
+          <li>Threads are locked to the provider and model chosen at creation, including shared Groq and Xiaomi MiMo threads.</li>
+          <li>After 5 shared requests, the UI shows a reminder that personal keys use a separate provider account.</li>
           <li>Streaming responses show deltas in real time with stop support.</li>
           <li>Each assistant reply shows prompt, output, and total token usage when available.</li>
         </ul>
@@ -443,7 +451,7 @@ export default function DocsPage() {
         <h2>Security</h2>
         <ul className="docs-list">
           <li>Provider keys are encrypted at rest and never returned in plaintext.</li>
-          <li>The shared Groq key stays server-side and is never exposed to clients.</li>
+          <li>The shared Groq and Xiaomi MiMo keys stay server-side and are never exposed to clients.</li>
           <li>Supabase verifies Magic Links/OTPs; the app then issues its existing signed httpOnly session cookie.</li>
           <li>Rate limiting protects chat streaming and password reset requests.</li>
           <li>Audit logs track key lifecycle events for traceability.</li>
@@ -457,7 +465,7 @@ export default function DocsPage() {
           <li>A key that was valid can be revoked later; validation endpoints update status.</li>
           <li>If a model refresh fails, cached models are served with a stale flag.</li>
           <li>Duplicate message requests are deduped via clientRequestId.</li>
-          <li>Free quota resets at 00:00 UTC for both the user bucket and the global pool.</li>
+          <li>Shared-catalog quota resets at 00:00 UTC for both the user bucket and the global pool.</li>
           <li>Rate limits return retryable errors with 429 responses.</li>
         </ul>
       </section>
@@ -466,8 +474,8 @@ export default function DocsPage() {
         <h2>Testing</h2>
         <ul className="docs-list">
           <li>Unit: provider adapters, crypto helpers, and validation schemas.</li>
-          <li>Integration: key validation, free quota reservation, model caching, and thread persistence.</li>
-          <li>E2E: use KeyLM Free, exhaust quota, connect a key, stream chat, and save history.</li>
+          <li>Integration: provider routing, quota reservation, model caching, and thread persistence.</li>
+          <li>E2E: use KeyLM Free and Pro models, exhaust, quota, connect a key, stream chat, and save history.</li>
           <li>Security: verify secrets never leak to logs or responses.</li>
         </ul>
       </section>
