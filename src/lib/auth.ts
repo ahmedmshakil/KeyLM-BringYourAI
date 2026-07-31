@@ -1,6 +1,5 @@
 import { cookies } from 'next/headers';
 import { prisma } from '@/lib/db';
-import { supportsSessionVersion, supportsUserProfileFields } from '@/lib/dbCompat';
 import { SESSION_COOKIE, verifySession } from '@/lib/session';
 
 export type SessionUser = {
@@ -23,81 +22,22 @@ export async function getSessionUser() {
     return null;
   }
 
-  const [sessionVersionEnabled, profileFieldsEnabled] = await Promise.all([
-    supportsSessionVersion(),
-    supportsUserProfileFields()
-  ]);
-
-  if (sessionVersionEnabled && profileFieldsEnabled) {
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: {
-        id: true,
-        email: true,
-        createdAt: true,
-        sessionVersion: true,
-        fullName: true,
-        profileImageUrl: true
-      }
-    });
-    if (!user || user.sessionVersion !== payload.ver) {
-      return null;
-    }
-    return user;
-  }
-
-  if (sessionVersionEnabled) {
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: {
-        id: true,
-        email: true,
-        createdAt: true,
-        sessionVersion: true
-      }
-    });
-    if (!user || user.sessionVersion !== payload.ver) {
-      return null;
-    }
-    return {
-      ...user,
-      fullName: null,
-      profileImageUrl: null
-    } satisfies SessionUser;
-  }
-
-  if (profileFieldsEnabled) {
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: {
-        id: true,
-        email: true,
-        createdAt: true,
-        fullName: true,
-        profileImageUrl: true
-      }
-    });
-    return user;
-  }
-
+  // Columns are part of the base schema — no runtime information_schema probes on the hot path.
   const user = await prisma.user.findUnique({
     where: { id: payload.sub },
     select: {
       id: true,
       email: true,
-      createdAt: true
+      createdAt: true,
+      sessionVersion: true,
+      fullName: true,
+      profileImageUrl: true
     }
   });
-
-  if (!user) {
+  if (!user || user.sessionVersion !== payload.ver) {
     return null;
   }
-
-  return {
-    ...user,
-    fullName: null,
-    profileImageUrl: null
-  } satisfies SessionUser;
+  return user;
 }
 
 export async function requireUser() {
