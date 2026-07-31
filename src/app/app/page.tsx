@@ -1,14 +1,20 @@
 'use client';
 
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Turnstile } from '@marsidev/react-turnstile';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { apiJson } from '@/lib/client/api';
 import { readSseStream } from '@/lib/client/sse';
 import { getUserDisplayName, getUserInitials, type PublicUser } from '@/lib/userProfile';
+import { AppLoadingShell } from './AppLoadingShell';
+import { ChatComposer } from './ChatComposer';
+import { ChatMessageList } from './ChatMessageList';
+
+const Turnstile = dynamic(
+  () => import('@marsidev/react-turnstile').then((mod) => mod.Turnstile),
+  { ssr: false }
+);
 
 const KEY_PROVIDERS = [
   { id: 'openai', name: 'OpenAI', detail: 'GPT models, strong reasoning' },
@@ -281,6 +287,8 @@ const formatUsageParts = (usage?: UsageInfo) => {
   return parts;
 };
 
+const stableFormatUsageParts = formatUsageParts;
+
 const formatTokenCount = (value: number) => numberFormatter.format(value);
 const formatCompactTokenCount = (value: number) => compactNumberFormatter.format(value);
 
@@ -332,10 +340,10 @@ function AppPageClient() {
   const [activeThread, setActiveThread] = useState<ThreadDetail | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ThreadInfo | null>(null);
   const [byokProvidersOpen, setByokProvidersOpen] = useState(false);
-  const [messageInput, setMessageInput] = useState('');
   const [notice, setNotice] = useState('');
   const [freeThresholdNotice, setFreeThresholdNotice] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(false);
   const [freeUsage, setFreeUsage] = useState<FreeUsageInfo | null>(null);
   const [selectedFreeModel, setSelectedFreeModel] = useState<string>('');
@@ -349,6 +357,7 @@ function AppPageClient() {
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageLoadError, setUsageLoadError] = useState('');
   const [usageGrain, setUsageGrain] = useState<UsageGrain>('day');
+  const [usageRequested, setUsageRequested] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const printFrameRef = useRef<HTMLIFrameElement | null>(null);
   const freeNoticeTimeoutRef = useRef<number | null>(null);
@@ -356,6 +365,7 @@ function AppPageClient() {
   const streamFlushTimeoutRef = useRef<number | null>(null);
   const streamBufferedDeltaRef = useRef('');
   const streamBufferedMessageIdRef = useRef<string | null>(null);
+  const usagePanelRef = useRef<HTMLDivElement | null>(null);
 
   const connectedProviders = useMemo(() => {
     return KEY_PROVIDERS.filter((provider) => providers[provider.id].some((key) => key.status === 'active'))
@@ -674,11 +684,40 @@ function AppPageClient() {
       setUsageLoadError('');
       setUsageLoading(false);
       setUsageGrain('day');
+      setUsageRequested(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user || !usageRequested) {
+      return;
+    }
+    void loadUsageDashboard(true);
+  }, [user?.id, usageRequested]);
+
+  useEffect(() => {
+    if (!user || usageRequested || isDemoMode) {
       return;
     }
 
-    void loadUsageDashboard(true);
-  }, [user?.id]);
+    const panel = usagePanelRef.current;
+    if (!panel || typeof IntersectionObserver === 'undefined') {
+      setUsageRequested(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setUsageRequested(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '120px' }
+    );
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [user, usageRequested, isDemoMode]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem('theme');
@@ -976,6 +1015,7 @@ function AppPageClient() {
     setUsageDashboard(null);
     setUsageLoadError('');
     setUsageGrain('day');
+    setUsageRequested(false);
     setNotice('');
     setFreeThresholdNotice('');
     setAuthView('login');
@@ -1131,9 +1171,9 @@ function AppPageClient() {
     }
   };
 
-  const handleSendDemoMessage = async () => {
-    const content = messageInput.trim();
-    if (!content || streaming) {
+  const handleSendDemoMessage = async (content: string) => {
+    const trimmed = content.trim();
+    if (!trimmed || streaming) {
       return;
     }
 
@@ -1142,7 +1182,6 @@ function AppPageClient() {
       return;
     }
 
-    setMessageInput('');
     setNotice('');
 
     const requestId = crypto.randomUUID();
@@ -1150,7 +1189,7 @@ function AppPageClient() {
     const optimisticUser: MessageInfo = {
       id: requestId,
       role: 'user',
-      content,
+      content: trimmed,
       createdAt
     };
     const optimisticAssistant: MessageInfo = {
@@ -1166,6 +1205,7 @@ function AppPageClient() {
     }));
 
     setDemoMessages((prev) => [...prev, optimisticUser, optimisticAssistant]);
+    setStreamingMessageId(optimisticAssistant.id);
     setStreaming(true);
 
     try {
@@ -1213,10 +1253,11 @@ function AppPageClient() {
       setNotice(error instanceof Error ? error.message : 'Failed to send demo message');
     } finally {
       setStreaming(false);
+      setStreamingMessageId(null);
     }
   };
 
-  const handleSendMessage = async () => {
+  const handleSendMessage = async (content: string) => {
     let thread = activeThread;
     if (!thread) {
       thread = await handleNewThread();
@@ -1224,17 +1265,16 @@ function AppPageClient() {
     if (!thread) {
       return;
     }
-    const content = messageInput.trim();
-    if (!content || streaming) {
+    const trimmed = content.trim();
+    if (!trimmed || streaming) {
       return;
     }
-    setMessageInput('');
     setNotice('');
     const requestId = crypto.randomUUID();
     const optimisticUser: MessageInfo = {
       id: requestId,
       role: 'user',
-      content,
+      content: trimmed,
       createdAt: new Date().toISOString()
     };
     const optimisticAssistant: MessageInfo = {
@@ -1247,9 +1287,10 @@ function AppPageClient() {
       prev ? { ...prev, messages: [...prev.messages, optimisticUser, optimisticAssistant] } : prev
     );
     updateThreadSummary(thread, {
-      lastMessage: content,
+      lastMessage: trimmed,
       updatedAt: optimisticUser.createdAt
     });
+    setStreamingMessageId(optimisticAssistant.id);
     setStreaming(true);
 
     const controller = new AbortController();
@@ -1261,7 +1302,7 @@ function AppPageClient() {
       const res = await fetch(`/api/threads/${thread.id}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, requestId, stream: shouldStream }),
+        body: JSON.stringify({ content: trimmed, requestId, stream: shouldStream }),
         signal: controller.signal
       });
       if (!res.ok) {
@@ -1307,8 +1348,8 @@ function AppPageClient() {
               lastMessage: payload.message.content,
               updatedAt: payload.message.createdAt
             });
-            void loadUsageDashboard();
             setStreaming(false);
+            setStreamingMessageId(null);
           }
 
           if (event.event === 'error') {
@@ -1328,6 +1369,7 @@ function AppPageClient() {
             }
             setNotice(message);
             setStreaming(false);
+            setStreamingMessageId(null);
           }
         });
       } else {
@@ -1348,13 +1390,14 @@ function AppPageClient() {
           lastMessage: payload.message.content,
           updatedAt: payload.message.createdAt
         });
-        void loadUsageDashboard();
         setStreaming(false);
+        setStreamingMessageId(null);
       }
     } catch (error) {
       flushBufferedAssistantDelta();
       setNotice(error instanceof Error ? error.message : 'Failed to send message');
       setStreaming(false);
+      setStreamingMessageId(null);
     } finally {
       if (shouldRefreshFreeUsage) {
         await loadFreeUsage();
@@ -1366,6 +1409,7 @@ function AppPageClient() {
     flushBufferedAssistantDelta();
     abortRef.current?.abort();
     setStreaming(false);
+    setStreamingMessageId(null);
     if (activeThread && isSharedRuntimeProvider(activeThread.provider)) {
       loadFreeUsage();
     }
@@ -1470,7 +1514,7 @@ function AppPageClient() {
           : '';
 
   if (loading) {
-    return <main className="app-container">Loading...</main>;
+    return <AppLoadingShell />;
   }
 
   if (showAuthScreen) {
@@ -1933,8 +1977,11 @@ function AppPageClient() {
                 </div>
               </div>
             )}
-            <div className="chat-messages">
-              {displayedMessages.length === 0 && (
+            <ChatMessageList
+              messages={displayedMessages}
+              streamingMessageId={streamingMessageId}
+              formatUsageParts={stableFormatUsageParts}
+              emptyState={
                 <div className="chat-empty-state">
                   <span className="badge glow">{isDemoMode ? 'Try Demo' : 'New conversation'}</span>
                   <h3>
@@ -1950,67 +1997,18 @@ function AppPageClient() {
                         : 'Pick a model, start a thread, and stream responses in your workspace.'}
                   </p>
                 </div>
-              )}
-              {displayedMessages.map((msg) => (
-                <div key={msg.id} className={`chat-bubble ${msg.role}`}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {msg.content}
-                  </ReactMarkdown>
-                  {msg.role === 'assistant' && formatUsageParts(msg.usage).length > 0 && (
-                    <div className="message-usage">
-                      {formatUsageParts(msg.usage).map((part) => (
-                        <span key={`${msg.id}-${part}`}>{part}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="chat-input">
-              <textarea
-                placeholder={composerPlaceholder}
-                value={messageInput}
-                disabled={isDemoMode && demoUsage.exhausted}
-                onChange={(event) => setMessageInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault();
-                    if (isDemoMode) {
-                      void handleSendDemoMessage();
-                    } else {
-                      void handleSendMessage();
-                    }
-                  }
-                }}
-              />
-              <div className="send-actions">
-                {isDemoMode ? (
-                  <>
-                    <button
-                      className="button"
-                      type="button"
-                      disabled={streaming || demoUsage.exhausted}
-                      onClick={() => void handleSendDemoMessage()}
-                    >
-                      {streaming ? 'Sending...' : demoUsage.exhausted ? 'Demo complete' : 'Send'}
-                    </button>
-                    <span className="tag">{demoRemainingLabel}</span>
-                  </>
-                ) : (
-                  <>
-                    {streaming ? (
-                      <button className="button secondary" onClick={handleStop}>
-                        Stop
-                      </button>
-                    ) : (
-                      <button className="button" onClick={handleSendMessage}>
-                        Send
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
+              }
+            />
+            <ChatComposer
+              placeholder={composerPlaceholder}
+              disabled={isDemoMode && demoUsage.exhausted}
+              streaming={streaming}
+              isDemoMode={isDemoMode}
+              demoExhausted={demoUsage.exhausted}
+              demoRemainingLabel={demoRemainingLabel}
+              onSend={isDemoMode ? handleSendDemoMessage : handleSendMessage}
+              onStop={handleStop}
+            />
           </div>
         </section>
 
@@ -2042,7 +2040,7 @@ function AppPageClient() {
               </p>
               {freeStatusMessage && <p className="free-usage-warning">{freeStatusMessage}</p>}
             </div>
-            <div className="card usage-dashboard-card">
+            <div className="card usage-dashboard-card" ref={usagePanelRef}>
               <div className="usage-dashboard-header">
                 <div>
                   <h3>Token usage</h3>
@@ -2068,7 +2066,7 @@ function AppPageClient() {
                 </div>
               </div>
 
-              {usageLoading && !usageDashboard ? (
+              {((!usageRequested || usageLoading) && !usageDashboard) ? (
                 <p className="usage-empty-state">Loading your token dashboard...</p>
               ) : usageLoadError ? (
                 <p className="usage-empty-state">{usageLoadError}</p>
@@ -2296,7 +2294,7 @@ function AppPageClient() {
 
 export default function AppPage() {
   return (
-    <Suspense fallback={<main className="app-container">Loading...</main>}>
+    <Suspense fallback={<AppLoadingShell />}>
       <AppPageClient />
     </Suspense>
   );

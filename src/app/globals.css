@@ -2689,3 +2689,82 @@ ol.docs-list li {
     grid-template-columns: 1fr;
   }
 }
+
+/* Performance: streaming plain text + loading skeletons */
+.chat-bubble-plain {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.app-loading-shell .skeleton-block {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--text, #1a1a1a) 8%, transparent) 0%,
+    color-mix(in srgb, var(--text, #1a1a1a) 14%, transparent) 50%,
+    color-mix(in srgb, var(--text, #1a1a1a) 8%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+  border-radius: 10px;
+}
+
+.app-loading-shell .skeleton-line {
+  height: 14px;
+  margin: 8px 0;
+}
+
+.app-loading-shell .skeleton-line.short {
+  width: 96px;
+}
+
+.app-loading-shell .skeleton-line.medium {
+  width: 160px;
+}
+
+.app-loading-shell .skeleton-pill {
+  width: 72px;
+  height: 32px;
+  border-radius: 999px;
+}
+
+.app-loading-shell .skeleton-card {
+  height: 72px;
+  margin-bottom: 12px;
+}
+
+.app-loading-shell .skeleton-card.tall {
+  height: 140px;
+}
+
+.app-loading-shell .skeleton-bubble {
+  height: 56px;
+  width: 62%;
+  margin: 12px 0;
+}
+
+.app-loading-shell .skeleton-bubble.wide {
+  width: 78%;
+  margin-left: auto;
+}
+
+.app-loading-shell .skeleton-composer {
+  height: 88px;
+  margin: 12px;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loading-shell .skeleton-block {
+    animation: none;
+  }
+}
+
