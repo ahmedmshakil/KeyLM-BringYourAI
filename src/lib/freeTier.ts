@@ -293,51 +293,46 @@ export async function reserveFreeRequest(userId: string): Promise<FreeUsageSnaps
               ON CONFLICT ("userId", "day") DO NOTHING
             `;
 
-            const [globalUsage] = await tx.$queryRaw<CountRow[]>`
-              SELECT "count"
-              FROM "GlobalDailyFreeUsage"
-              WHERE "day" = ${day}
-              FOR UPDATE
+            // Atomic conditional increments — no SELECT FOR UPDATE lock waterfall.
+            // Check user quota first (cheaper failure path for a single user).
+            const nextUser = await tx.$queryRaw<CountRow[]>`
+              UPDATE "UserDailyFreeUsage"
+              SET "count" = "count" + 1, "updatedAt" = NOW()
+              WHERE "userId" = ${userId} AND "day" = ${day} AND "count" < ${config.userLimit}
+              RETURNING "count"
             `;
-            if ((globalUsage?.count ?? 0) >= config.globalLimit) {
-              throw new FreeQuotaError(
-                'free_global_limit_reached',
-                'No global shared API requests are left today. Use your own API key to continue.'
-              );
-            }
-
-            const [userUsage] = await tx.$queryRaw<CountRow[]>`
-              SELECT "count"
-              FROM "UserDailyFreeUsage"
-              WHERE "userId" = ${userId} AND "day" = ${day}
-              FOR UPDATE
-            `;
-            if ((userUsage?.count ?? 0) >= config.userLimit) {
+            if (nextUser.length === 0) {
               throw new FreeQuotaError(
                 'free_user_limit_reached',
                 'Your shared daily request limit is over. Use your own API key to continue chatting.'
               );
             }
 
-            const [nextGlobal] = await tx.$queryRaw<CountRow[]>`
+            const nextGlobal = await tx.$queryRaw<CountRow[]>`
               UPDATE "GlobalDailyFreeUsage"
               SET "count" = "count" + 1, "updatedAt" = NOW()
-              WHERE "day" = ${day}
+              WHERE "day" = ${day} AND "count" < ${config.globalLimit}
               RETURNING "count"
             `;
-            const [nextUser] = await tx.$queryRaw<CountRow[]>`
-              UPDATE "UserDailyFreeUsage"
-              SET "count" = "count" + 1, "updatedAt" = NOW()
-              WHERE "userId" = ${userId} AND "day" = ${day}
-              RETURNING "count"
-            `;
+            if (nextGlobal.length === 0) {
+              // Roll back the user increment so a global miss does not consume user quota.
+              await tx.$executeRaw`
+                UPDATE "UserDailyFreeUsage"
+                SET "count" = GREATEST("count" - 1, 0), "updatedAt" = NOW()
+                WHERE "userId" = ${userId} AND "day" = ${day}
+              `;
+              throw new FreeQuotaError(
+                'free_global_limit_reached',
+                'No global shared API requests are left today. Use your own API key to continue.'
+              );
+            }
 
             return buildStatus(
               getDefaultSharedModel(),
               config.userLimit,
               config.globalLimit,
-              nextUser?.count ?? 0,
-              nextGlobal?.count ?? 0
+              nextUser[0]?.count ?? 0,
+              nextGlobal[0]?.count ?? 0
             );
           },
           {
