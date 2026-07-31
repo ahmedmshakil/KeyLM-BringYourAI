@@ -1,5 +1,5 @@
-export type ProviderId = 'openai' | 'gemini' | 'anthropic' | 'groq';
-export type KeyProviderId = Exclude<ProviderId, 'groq'>;
+export type ProviderId = 'openai' | 'gemini' | 'anthropic' | 'groq' | 'xiaomi';
+export type KeyProviderId = 'openai' | 'gemini' | 'anthropic';
 
 export type NormalizedModel = {
   id: string;

@@ -15,10 +15,23 @@ export type FreeUsageStatus =
   | 'global_exhausted'
   | 'disabled';
 
+export type SharedModelProvider = 'groq' | 'xiaomi';
+export type SharedModelTier = 'free' | 'pro';
+
+export type SharedModel = {
+  id: string;
+  displayName: string;
+  provider: SharedModelProvider;
+  tier: SharedModelTier;
+  available: boolean;
+};
+
+type SharedModelDefinition = Omit<SharedModel, 'available'>;
+
 export type FreeUsageSnapshot = {
   provider: 'groq';
   model: string;
-  models: string[];
+  models: SharedModel[];
   user: FreeUsageBucket;
   global: FreeUsageBucket;
   status: FreeUsageStatus;
@@ -35,16 +48,49 @@ export class FreeQuotaError extends Error {
 }
 
 const DEFAULT_BASE_URL = 'https://api.groq.com/openai/v1';
-const FREE_MODELS = [
-  'openai/gpt-oss-120b',
-  'moonshotai/kimi-k2-instruct-0905',
-  'groq/compound',
-  'qwen/qwen3-32b'
+const DEFAULT_XIAOMI_BASE_URL = 'https://api.xiaomimimo.com/v1';
+const SHARED_MODEL_DEFINITIONS: SharedModelDefinition[] = [
+  {
+    id: 'openai/gpt-oss-120b',
+    displayName: 'GPT OSS 120B',
+    provider: 'groq',
+    tier: 'free'
+  },
+  {
+    id: 'moonshotai/kimi-k2-instruct-0905',
+    displayName: 'Kimi K2 Instruct',
+    provider: 'groq',
+    tier: 'free'
+  },
+  {
+    id: 'groq/compound',
+    displayName: 'Groq Compound',
+    provider: 'groq',
+    tier: 'free'
+  },
+  {
+    id: 'qwen/qwen3-32b',
+    displayName: 'Qwen3 32B',
+    provider: 'groq',
+    tier: 'free'
+  },
+  {
+    id: 'mimo-v2.5',
+    displayName: 'MiMo V2.5',
+    provider: 'xiaomi',
+    tier: 'pro'
+  },
+  {
+    id: 'mimo-v2.5-pro',
+    displayName: 'MiMo V2.5 Pro',
+    provider: 'xiaomi',
+    tier: 'pro'
+  }
 ];
-const DEFAULT_MODEL = FREE_MODELS[0];
+const DEFAULT_MODEL = SHARED_MODEL_DEFINITIONS[0].id;
 const DEFAULT_FALLBACK_MODELS = ['llama-3.1-8b-instant'];
 const DEFAULT_USER_LIMIT = 50;
-const DEFAULT_GLOBAL_LIMIT = 1000;
+const DEFAULT_GLOBAL_LIMIT = 100;
 const MAX_RESERVATION_RETRIES = 4;
 
 function parseLimit(raw: string | undefined, fallback: number) {
@@ -94,7 +140,7 @@ function buildStatus(
   return {
     provider: 'groq',
     model,
-    models: FREE_MODELS,
+    models: getSharedModels(),
     user,
     global,
     status,
@@ -106,12 +152,19 @@ type CountRow = {
   count: number;
 };
 
-export function getFreeModels(): string[] {
-  return [...FREE_MODELS];
+export function getSharedModels(): SharedModel[] {
+  return SHARED_MODEL_DEFINITIONS.map((model) => ({
+    ...model,
+    available: isSharedModelConfigured(model)
+  }));
 }
 
-export function isValidFreeModel(model: string): boolean {
-  return FREE_MODELS.includes(model);
+export function getSharedModel(modelId: string): SharedModel | undefined {
+  return getSharedModels().find((model) => model.id === modelId);
+}
+
+export function isValidSharedModel(model: string): boolean {
+  return SHARED_MODEL_DEFINITIONS.some((entry) => entry.id === model);
 }
 
 export function getFreeTierConfig() {
@@ -119,21 +172,55 @@ export function getFreeTierConfig() {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
+  const requestedModel = process.env.GROQ_FREE_MODEL?.trim() || DEFAULT_MODEL;
+  const model = SHARED_MODEL_DEFINITIONS.some(
+    (entry) => entry.id === requestedModel && entry.provider === 'groq'
+  )
+    ? requestedModel
+    : DEFAULT_MODEL;
 
   return {
     apiKey: process.env.GROQ_API_KEY?.trim() ?? '',
     baseUrl: (process.env.GROQ_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/$/, ''),
-    model: process.env.GROQ_FREE_MODEL?.trim() || DEFAULT_MODEL,
-    models: FREE_MODELS,
+    model,
     fallbackModels,
     userLimit: parseLimit(process.env.FREE_USER_DAILY_LIMIT, DEFAULT_USER_LIMIT),
     globalLimit: parseLimit(process.env.FREE_GLOBAL_DAILY_LIMIT, DEFAULT_GLOBAL_LIMIT)
   };
 }
 
+export function getXiaomiConfig() {
+  return {
+    apiKey: process.env.MIMO_API_KEY?.trim() ?? '',
+    baseUrl: (process.env.MIMO_BASE_URL?.trim() || DEFAULT_XIAOMI_BASE_URL).replace(/\/$/, '')
+  };
+}
+
 export function isFreeTierConfigured() {
   const config = getFreeTierConfig();
-  return Boolean(config.apiKey && config.model);
+  return Boolean(config.apiKey);
+}
+
+export function isXiaomiConfigured() {
+  return Boolean(getXiaomiConfig().apiKey);
+}
+
+export function isSharedModelConfigured(model: Pick<SharedModelDefinition, 'provider'>) {
+  return model.provider === 'groq' ? isFreeTierConfigured() : isXiaomiConfigured();
+}
+
+export function isSharedCatalogConfigured() {
+  return getSharedModels().some((model) => model.available);
+}
+
+export function getDefaultSharedModel() {
+  const config = getFreeTierConfig();
+  const configuredDefault = getSharedModel(config.model);
+  if (configuredDefault?.provider === 'groq' && configuredDefault.available) {
+    return configuredDefault.id;
+  }
+
+  return getSharedModels().find((model) => model.available)?.id ?? config.model;
 }
 
 async function getUsageRows(userId: string, day: Date) {
@@ -164,12 +251,12 @@ export async function getFreeUsageStatus(userId: string): Promise<FreeUsageSnaps
   const config = getFreeTierConfig();
   const day = getQuotaDay();
 
-  if (!isFreeTierConfigured()) {
-    return buildStatus(config.model, config.userLimit, config.globalLimit, 0, 0, false);
+  if (!isSharedCatalogConfigured()) {
+    return buildStatus(getDefaultSharedModel(), config.userLimit, config.globalLimit, 0, 0, false);
   }
 
   const { userCount, globalCount } = await getUsageRows(userId, day);
-  return buildStatus(config.model, config.userLimit, config.globalLimit, userCount, globalCount);
+  return buildStatus(getDefaultSharedModel(), config.userLimit, config.globalLimit, userCount, globalCount);
 }
 
 function isRetryableReservationError(error: unknown) {
@@ -183,8 +270,8 @@ function isRetryableReservationError(error: unknown) {
 
 export async function reserveFreeRequest(userId: string): Promise<FreeUsageSnapshot> {
   const config = getFreeTierConfig();
-  if (!isFreeTierConfigured()) {
-    throw new Error('KeyLM free mode is not configured.');
+  if (!isSharedCatalogConfigured()) {
+    throw new Error('KeyLM shared catalog is not configured.');
   }
 
   const day = getQuotaDay();
@@ -215,7 +302,7 @@ export async function reserveFreeRequest(userId: string): Promise<FreeUsageSnaps
             if ((globalUsage?.count ?? 0) >= config.globalLimit) {
               throw new FreeQuotaError(
                 'free_global_limit_reached',
-                'No global free API requests are left today. Connect your own API key to continue.'
+                'No global shared API requests are left today. Use your own API key to continue.'
               );
             }
 
@@ -228,7 +315,7 @@ export async function reserveFreeRequest(userId: string): Promise<FreeUsageSnaps
             if ((userUsage?.count ?? 0) >= config.userLimit) {
               throw new FreeQuotaError(
                 'free_user_limit_reached',
-                'Your free daily request limit is over. Connect your own API key to continue chatting.'
+                'Your shared daily request limit is over. Use your own API key to continue chatting.'
               );
             }
 
@@ -246,7 +333,7 @@ export async function reserveFreeRequest(userId: string): Promise<FreeUsageSnaps
             `;
 
             return buildStatus(
-              config.model,
+              getDefaultSharedModel(),
               config.userLimit,
               config.globalLimit,
               nextUser?.count ?? 0,
@@ -276,8 +363,8 @@ export async function reserveFreeRequest(userId: string): Promise<FreeUsageSnaps
 
 export async function releaseFreeRequest(userId: string): Promise<FreeUsageSnapshot> {
   const config = getFreeTierConfig();
-  if (!isFreeTierConfigured()) {
-    throw new Error('KeyLM free mode is not configured.');
+  if (!isSharedCatalogConfigured()) {
+    throw new Error('KeyLM shared catalog is not configured.');
   }
 
   const day = getQuotaDay();
@@ -299,7 +386,7 @@ export async function releaseFreeRequest(userId: string): Promise<FreeUsageSnaps
         `;
 
         return buildStatus(
-          config.model,
+          getDefaultSharedModel(),
           config.userLimit,
           config.globalLimit,
           nextUser?.count ?? 0,
