@@ -4,7 +4,7 @@ import { ProviderId } from '@/lib/providers/types';
 type ThreadSettings = {
   temperature?: number;
   maxTokens?: number;
-  runtimeSource?: 'groq' | 'openrouter';
+  runtimeSource?: 'groq' | 'xiaomi' | 'openrouter';
   [key: string]: unknown;
 };
 
@@ -16,20 +16,23 @@ export function buildThreadSettings(
   settings: Record<string, unknown> | undefined,
   runtimeProvider: ProviderId
 ) {
-  if (!settings && runtimeProvider !== 'groq') {
+  if (!settings && runtimeProvider !== 'groq' && runtimeProvider !== 'xiaomi') {
     return undefined;
   }
 
   const nextSettings = { ...(settings ?? {}) } as ThreadSettings;
-  if (runtimeProvider === 'groq') {
-    nextSettings.runtimeSource = 'groq';
+  if (runtimeProvider === 'groq' || runtimeProvider === 'xiaomi') {
+    nextSettings.runtimeSource = runtimeProvider;
   }
   return nextSettings;
 }
 
 export function getRuntimeProvider(thread: Pick<Thread, 'provider' | 'settings'>): ProviderId {
   const settings = readThreadSettings(thread.settings);
-  if (settings?.runtimeSource === 'groq' || settings?.runtimeSource === 'openrouter') {
+  if (settings?.runtimeSource === 'groq' || settings?.runtimeSource === 'xiaomi') {
+    return settings.runtimeSource;
+  }
+  if (settings?.runtimeSource === 'openrouter') {
     return 'groq';
   }
   if ((thread.provider as string) === 'openrouter') {

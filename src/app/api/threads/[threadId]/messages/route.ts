@@ -11,7 +11,14 @@ import { buildChatMessages } from '@/lib/services/chatService';
 import { sseResponse } from '@/lib/streaming';
 import { takeToken } from '@/lib/rateLimit';
 import { prisma } from '@/lib/db';
-import { FreeQuotaError, getFreeTierConfig, isValidFreeModel, releaseFreeRequest, reserveFreeRequest } from '@/lib/freeTier';
+import {
+  FreeQuotaError,
+  getFreeTierConfig,
+  getSharedModel,
+  getXiaomiConfig,
+  releaseFreeRequest,
+  reserveFreeRequest
+} from '@/lib/freeTier';
 import { toMessageDto } from '@/lib/services/threadDtos';
 import { UsageInfo } from '@/lib/providers/types';
 import { getRuntimeProvider } from '@/lib/services/threadRuntime';
@@ -78,13 +85,32 @@ export const POST = withApiMetrics(
     let rawKey = '';
     let runtimeModel = thread.model;
     let freeRequestReserved = false;
-    if (runtimeProvider === 'groq') {
+    if (runtimeProvider === 'groq' || runtimeProvider === 'xiaomi') {
       try {
-        const config = getFreeTierConfig();
-        rawKey = config.apiKey;
-        // Use the thread's stored model (user's choice at creation time),
-        // falling back to config default if the model is no longer valid
-        runtimeModel = isValidFreeModel(thread.model) ? thread.model : config.model;
+        const sharedModel = getSharedModel(thread.model);
+        if (runtimeProvider === 'xiaomi' && (!sharedModel || sharedModel.provider !== 'xiaomi' || !sharedModel.available)) {
+          return errorResponse(
+            { code: 'model_unavailable', message: 'This Xiaomi MiMo model is not configured right now.' },
+            503
+          );
+        }
+
+        if (runtimeProvider === 'xiaomi') {
+          rawKey = getXiaomiConfig().apiKey;
+          runtimeModel = sharedModel!.id;
+        } else {
+          const config = getFreeTierConfig();
+          if (!config.apiKey) {
+            return errorResponse(
+              { code: 'model_unavailable', message: 'This Groq model is not configured right now.' },
+              503
+            );
+          }
+          rawKey = config.apiKey;
+          // Preserve existing Groq threads by using the current Groq default if
+          // their stored model is no longer in the shared catalog.
+          runtimeModel = sharedModel?.provider === 'groq' ? sharedModel.id : config.model;
+        }
         await reserveFreeRequest(user.id);
         freeRequestReserved = true;
       } catch (error) {
@@ -95,7 +121,7 @@ export const POST = withApiMetrics(
 
         recordAppEvent('chat_message_request', 'disabled');
         return errorResponse(
-          { code: 'free_unavailable', message: 'KeyLM free mode is not configured right now.' },
+          { code: 'free_unavailable', message: 'KeyLM shared catalog is not configured right now.' },
           503
         );
       }
