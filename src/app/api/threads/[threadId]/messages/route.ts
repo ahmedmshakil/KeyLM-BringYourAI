@@ -3,7 +3,7 @@ import { requireUser } from '@/lib/auth';
 import { errorResponse, jsonResponse } from '@/lib/http';
 import { recordAppEvent, withApiMetrics } from '@/lib/metrics';
 import { messageCreateSchema } from '@/lib/validators';
-import { getThread, appendMessage, findMessagesByRequestId } from '@/lib/services/threadService';
+import { getThreadForChat, appendMessage, findMessagesByRequestId } from '@/lib/services/threadService';
 import { getActiveKey } from '@/lib/services/keyService';
 import { decryptSecret } from '@/lib/crypto';
 import { getProviderAdapter } from '@/lib/providers';
@@ -56,7 +56,7 @@ export const POST = withApiMetrics(
     }
 
     const [thread, rateLimited] = await Promise.all([
-      getThread(user.id, threadId),
+      getThreadForChat(user.id, threadId),
       takeToken(`user:${user.id}`)
     ]);
 
@@ -150,16 +150,19 @@ export const POST = withApiMetrics(
       if (firstUserMessage) {
         const title = buildThreadTitle(firstUserMessage.content);
         if (title) {
-          await prisma.thread.update({
-            where: { id: thread.id },
-            data: { title }
-          });
+          // Fire-and-forget: do not block LLM start for title write
+          prisma.thread
+            .update({
+              where: { id: thread.id },
+              data: { title }
+            })
+            .catch(() => {});
         }
       }
     }
 
     const adapter = getProviderAdapter(runtimeProvider);
-    const messages = buildChatMessages(thread, thread.messages.concat(userMessage));
+    const messages = buildChatMessages(thread, [...thread.messages, userMessage]);
 
     const settings = (thread.settings as { temperature?: number; maxTokens?: number }) ?? {};
     const buildMetadata = (usage?: UsageInfo) => (usage ? { usage } : undefined);

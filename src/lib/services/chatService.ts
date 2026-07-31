@@ -1,7 +1,15 @@
 import { ChatMessage } from '@/lib/providers/types';
-import { Thread, Message } from '@prisma/client';
 
-export function buildChatMessages(thread: Thread, messages: Message[]): ChatMessage[] {
+type ThreadWithSystemPrompt = {
+  systemPrompt?: string | null;
+};
+
+type MessageLike = {
+  role: string;
+  content: string;
+};
+
+export function buildChatMessages(thread: ThreadWithSystemPrompt, messages: MessageLike[]): ChatMessage[] {
   const output: ChatMessage[] = [];
   if (thread.systemPrompt) {
     output.push({ role: 'system', content: thread.systemPrompt });

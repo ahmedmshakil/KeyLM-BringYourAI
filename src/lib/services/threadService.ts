@@ -2,6 +2,36 @@ import { Provider, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { withDatabaseMetrics } from '@/lib/metrics';
 
+/** Max messages sent as LLM context on each chat turn. */
+export const CHAT_CONTEXT_MESSAGE_LIMIT = 40;
+/** Max characters kept for thread sidebar previews. */
+export const THREAD_PREVIEW_MAX_CHARS = 120;
+/** Cap threads returned on list/bootstrap to bound payload size. */
+export const THREAD_LIST_LIMIT = 50;
+
+const MESSAGE_SELECT = {
+  id: true,
+  role: true,
+  content: true,
+  createdAt: true,
+  clientRequestId: true,
+  metadata: true
+} as const;
+
+function truncatePreview(content: string | null | undefined, maxChars = THREAD_PREVIEW_MAX_CHARS) {
+  if (!content) {
+    return null;
+  }
+  const cleaned = content.replace(/\s+/g, ' ').trim();
+  if (!cleaned) {
+    return null;
+  }
+  if (cleaned.length <= maxChars) {
+    return cleaned;
+  }
+  return `${cleaned.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
 export async function createThread(
   userId: string,
   provider: Provider,
@@ -22,14 +52,30 @@ export async function createThread(
   );
 }
 
-export async function listThreads(userId: string) {
-  return withDatabaseMetrics('thread.list', () =>
+export async function listThreads(userId: string, options?: { limit?: number }) {
+  const limit = options?.limit ?? THREAD_LIST_LIMIT;
+  const threads = await withDatabaseMetrics('thread.list', () =>
     prisma.thread.findMany({
       where: { userId },
       orderBy: { updatedAt: 'desc' },
-      include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } }
+      take: limit,
+      include: {
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { content: true }
+        }
+      }
     })
   );
+
+  return threads.map((thread) => ({
+    ...thread,
+    messages: thread.messages.map((message) => ({
+      ...message,
+      content: truncatePreview(message.content) ?? ''
+    }))
+  }));
 }
 
 export async function getThread(userId: string, threadId: string) {
@@ -39,6 +85,48 @@ export async function getThread(userId: string, threadId: string) {
       include: { messages: { orderBy: { createdAt: 'asc' } } }
     })
   );
+}
+
+/**
+ * Lean thread load for chat POST: metadata + last N messages only.
+ * Avoids unbounded history DB I/O and LLM context growth.
+ */
+export async function getThreadForChat(
+  userId: string,
+  threadId: string,
+  maxMessages = CHAT_CONTEXT_MESSAGE_LIMIT
+) {
+  return withDatabaseMetrics('thread.get_for_chat', async () => {
+    const thread = await prisma.thread.findFirst({
+      where: { id: threadId, userId },
+      select: {
+        id: true,
+        userId: true,
+        provider: true,
+        model: true,
+        title: true,
+        status: true,
+        systemPrompt: true,
+        settings: true,
+        createdAt: true,
+        updatedAt: true,
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: maxMessages,
+          select: MESSAGE_SELECT
+        }
+      }
+    });
+
+    if (!thread) {
+      return null;
+    }
+
+    return {
+      ...thread,
+      messages: [...thread.messages].reverse()
+    };
+  });
 }
 
 export async function deleteThread(userId: string, threadId: string) {
