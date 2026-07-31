@@ -3,6 +3,7 @@ import * as openai from '@/lib/providers/openai';
 import * as gemini from '@/lib/providers/gemini';
 import * as anthropic from '@/lib/providers/anthropic';
 import * as groq from '@/lib/providers/groq';
+import * as xiaomi from '@/lib/providers/xiaomi';
 
 type AdapterProviderId = ProviderId | 'openrouter';
 
@@ -17,6 +18,8 @@ export function getProviderAdapter(provider: AdapterProviderId): ProviderAdapter
     case 'openrouter':
     case 'groq':
       return groq;
+    case 'xiaomi':
+      return xiaomi;
     default:
       throw new Error(`Unsupported provider: ${provider}`);
   }
