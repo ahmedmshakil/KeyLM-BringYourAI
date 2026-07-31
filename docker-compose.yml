@@ -51,11 +51,13 @@ services:
       PASSWORD_RESET_TTL_MINUTES: "${PASSWORD_RESET_TTL_MINUTES:-60}"
       PROVIDER_REQUEST_TIMEOUT_MS: "${PROVIDER_REQUEST_TIMEOUT_MS:-30000}"
 
-      # Optional Groq-backed KeyLM free tier from .env.example.
+      # Optional KeyLM shared Free/Pro catalog from .env.example.
       GROQ_API_KEY: "${GROQ_API_KEY:-}"
       GROQ_BASE_URL: "${GROQ_BASE_URL:-https://api.groq.com/openai/v1}"
       GROQ_FREE_MODEL: "${GROQ_FREE_MODEL:-moonshotai/kimi-k2-instruct-0905}"
       GROQ_FREE_FALLBACK_MODELS: "${GROQ_FREE_FALLBACK_MODELS:-llama-3.1-8b-instant}"
+      MIMO_API_KEY: "${MIMO_API_KEY:-}"
+      MIMO_BASE_URL: "${MIMO_BASE_URL:-https://api.xiaomimimo.com/v1}"
       FREE_USER_DAILY_LIMIT: "${FREE_USER_DAILY_LIMIT:-50}"
       FREE_GLOBAL_DAILY_LIMIT: "${FREE_GLOBAL_DAILY_LIMIT:-1000}"
     ports:
